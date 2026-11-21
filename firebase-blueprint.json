@@ -1,0 +1,143 @@
+{
+  "entities": {
+    "TradingSignal": {
+      "title": "TradingSignal",
+      "description": "A real-time trading signal with entry, stop loss, take-profit targets, risk-reward ratio, strategy label, and execution status.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "symbol": {
+          "type": "string",
+          "description": "Trading pair or instrument symbol, e.g. XAUUSD, BTCUSDT, BNBUSDT."
+        },
+        "timeframe": {
+          "type": "string",
+          "enum": ["M1", "M5", "M15", "M30", "H1", "H4", "D1"],
+          "description": "Chart timeframe for the signal."
+        },
+        "side": {
+          "type": "string",
+          "enum": ["BUY", "SELL"],
+          "description": "Trade direction."
+        },
+        "strategy": {
+          "type": "string",
+          "description": "Signal strategy name, e.g. 3-Module PA, Bollinger Bands, RSI+EMA, H1 Candle, Candlestick PA."
+        },
+        "entry": {
+          "type": "number",
+          "description": "Entry price level."
+        },
+        "sl": {
+          "type": "number",
+          "description": "Stop loss price level."
+        },
+        "tp1": {
+          "type": "number",
+          "description": "First take-profit target price."
+        },
+        "tp2": {
+          "type": "number",
+          "description": "Second take-profit target price."
+        },
+        "rr": {
+          "type": "string",
+          "description": "Risk-to-reward ratio label, e.g. 1:2.4."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ACTIVE", "TP1_HIT", "TP2_HIT", "SL_HIT", "CLOSED"],
+          "description": "Current lifecycle status of the trade signal."
+        },
+        "timestamp": {
+          "type": "integer",
+          "description": "Signal emission epoch timestamp in milliseconds."
+        },
+        "pnlPercent": {
+          "type": "number",
+          "description": "Realized or partial net P&L percentage for the trade."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Optional execution or setup notes."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() at creation."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp() on updates."
+        }
+      },
+      "required": [
+        "userId",
+        "symbol",
+        "timeframe",
+        "side",
+        "strategy",
+        "entry",
+        "sl",
+        "tp1",
+        "tp2",
+        "rr",
+        "status",
+        "timestamp",
+        "pnlPercent",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TradeStatsSummary": {
+      "title": "TradeStatsSummary",
+      "description": "Aggregated performance statistics for Today, Yesterday, Win Rate, and Active Trades.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "todayWins": { "type": "integer" },
+        "todayLosses": { "type": "integer" },
+        "todayNetPnl": { "type": "number" },
+        "yesterdayWins": { "type": "integer" },
+        "yesterdayLosses": { "type": "integer" },
+        "yesterdayNetPnl": { "type": "number" },
+        "winRate": { "type": "number" },
+        "activeCount": { "type": "integer" },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "todayWins",
+        "todayLosses",
+        "todayNetPnl",
+        "yesterdayWins",
+        "yesterdayLosses",
+        "yesterdayNetPnl",
+        "winRate",
+        "activeCount",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/signals/{signalId}": {
+      "schema": { "$ref": "#/entities/TradingSignal" },
+      "description": "User-scoped trading signals synchronized in real time."
+    },
+    "/users/{userId}/stats/{statsId}": {
+      "schema": { "$ref": "#/entities/TradeStatsSummary" },
+      "description": "User-scoped performance metrics summary document."
+    }
+  }
+}

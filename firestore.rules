@@ -1,0 +1,129 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidSignal(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.symbol is string && data.symbol.size() >= 1 && data.symbol.size() <= 20 &&
+             data.timeframe in ['M1', 'M5', 'M15', 'M30', 'H1', 'H4', 'D1'] &&
+             data.side in ['BUY', 'SELL'] &&
+             data.strategy is string && data.strategy.size() >= 1 && data.strategy.size() <= 60 &&
+             data.entry is number && data.entry > 0 &&
+             data.sl is number && data.sl > 0 &&
+             data.tp1 is number && data.tp1 > 0 &&
+             data.tp2 is number && data.tp2 > 0 &&
+             data.rr is string && data.rr.size() >= 1 && data.rr.size() <= 20 &&
+             data.status in ['ACTIVE', 'TP1_HIT', 'TP2_HIT', 'SL_HIT', 'CLOSED'] &&
+             data.timestamp is int && data.timestamp > 0 &&
+             data.pnlPercent is number && data.pnlPercent >= -1000 && data.pnlPercent <= 10000 &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 200));
+    }
+
+    function isValidStatsSummary(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.todayWins is int && data.todayWins >= 0 &&
+             data.todayLosses is int && data.todayLosses >= 0 &&
+             data.todayNetPnl is number &&
+             data.yesterdayWins is int && data.yesterdayWins >= 0 &&
+             data.yesterdayLosses is int && data.yesterdayLosses >= 0 &&
+             data.yesterdayNetPnl is number &&
+             data.winRate is number && data.winRate >= 0 && data.winRate <= 100 &&
+             data.activeCount is int && data.activeCount >= 0;
+    }
+
+    match /users/{userId}/signals/{signalId} {
+      allow get: if isOwner(userId) && isValidId(signalId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(signalId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'symbol', 'timeframe', 'side', 'strategy',
+                         'entry', 'sl', 'tp1', 'tp2', 'rr', 'status',
+                         'timestamp', 'pnlPercent', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'symbol', 'timeframe', 'side', 'strategy',
+                         'entry', 'sl', 'tp1', 'tp2', 'rr', 'status',
+                         'timestamp', 'pnlPercent', 'notes', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidSignal(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(signalId) &&
+                       isValidSignal(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       existing().status in ['ACTIVE', 'TP1_HIT'] &&
+                       (
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'pnlPercent', 'updatedAt']) ||
+                         incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'updatedAt'])
+                       );
+
+      allow delete: if isOwner(userId) && isValidId(signalId);
+    }
+
+    match /users/{userId}/stats/{statsId} {
+      allow get: if isOwner(userId) && isValidId(statsId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       isValidId(statsId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'userId', 'todayWins', 'todayLosses', 'todayNetPnl',
+                         'yesterdayWins', 'yesterdayLosses', 'yesterdayNetPnl',
+                         'winRate', 'activeCount', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'todayWins', 'todayLosses', 'todayNetPnl',
+                         'yesterdayWins', 'yesterdayLosses', 'yesterdayNetPnl',
+                         'winRate', 'activeCount', 'updatedAt'
+                       ]) &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidStatsSummary(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(statsId) &&
+                       isValidStatsSummary(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'todayWins', 'todayLosses', 'todayNetPnl',
+                         'yesterdayWins', 'yesterdayLosses', 'yesterdayNetPnl',
+                         'winRate', 'activeCount', 'updatedAt'
+                       ]);
+
+      allow delete: if isOwner(userId) && isValidId(statsId);
+    }
+  }
+}

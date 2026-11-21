@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Digital Vertex</string>
+    <string name="owner_signature">By Muhammad Zain</string>
+    <string name="status_firebase_live">FIREBASE LIVE</string>
+    <string name="status_demo_mode">DEMO MODE</string>
+    <string name="status_disconnected">DISCONNECTED</string>
+    <string name="status_connecting">CONNECTING</string>
+    <string name="tab_live_signals">Live Signals</string>
+    <string name="tab_active_history">Active &amp; History</string>
+    <string name="tab_desk_admin">Desk &amp; Admin</string>
+</resources>

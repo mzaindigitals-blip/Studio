@@ -1,0 +1,6 @@
+{
+  "name": "Digital Vertex",
+  "description": "Digital Vertex by Muhammad Zain — Professional real-time trading signal terminal with Admin/Client roles, multi-theme dark UI, Firebase RTDB/Firestore sync, and free background push notifications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
