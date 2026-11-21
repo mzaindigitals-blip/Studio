@@ -74,8 +74,10 @@ import com.example.ui.theme.TerminalTheme
 import com.example.viewmodel.TradingDeskUiState
 import com.example.viewmodel.TradingDeskViewModel
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 enum class DeskTab(
@@ -106,8 +108,15 @@ enum class DeskTab(
 
 @Composable
 fun SignalDeskApp() {
-    val auth = remember { Firebase.auth }
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    val context = LocalContext.current
+    val isDefaultFirebaseReady = remember(context) {
+        FirebaseApp.getApps(context).isNotEmpty()
+    }
+    val auth = remember(isDefaultFirebaseReady) {
+        if (isDefaultFirebaseReady) Firebase.auth else null
+    }
+    val currentUser by (auth?.authStateFlow() ?: flowOf(null))
+        .collectAsStateWithLifecycle(initialValue = auth?.currentUser)
     val authKey = currentUser?.uid ?: "guest"
 
     key(authKey) {
@@ -118,10 +127,15 @@ fun SignalDeskApp() {
                     val app = checkNotNull(this[APPLICATION_KEY]) {
                         "APPLICATION_KEY missing from CreationExtras"
                     }
-                    val databaseId = app.getString(R.string.firestore_database_id)
-                    val db = FirebaseFirestore.getInstance(databaseId)
+                    val builtInRepo = if (auth != null) {
+                        val databaseId = app.getString(R.string.firestore_database_id)
+                        val db = FirebaseFirestore.getInstance(databaseId)
+                        BuiltInFirestoreRepository(db, auth)
+                    } else {
+                        null
+                    }
                     TradingDeskViewModel(
-                        builtInRepo = BuiltInFirestoreRepository(db, auth),
+                        builtInRepo = builtInRepo,
                         customRepo = CustomFirebaseRepository(app.applicationContext),
                         demoRepo = DemoSignalRepository(),
                         prefsStore = ConfigPreferencesStore(app.applicationContext),

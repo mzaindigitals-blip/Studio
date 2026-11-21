@@ -83,7 +83,7 @@ data class TradingDeskUiState(
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TradingDeskViewModel(
-    private val builtInRepo: BuiltInFirestoreRepository,
+    private val builtInRepo: BuiltInFirestoreRepository?,
     private val customRepo: CustomFirebaseRepository,
     private val demoRepo: DemoSignalRepository,
     private val prefsStore: ConfigPreferencesStore,
@@ -131,9 +131,13 @@ class TradingDeskViewModel(
                     }
                 }
                 ConnectionMode.BUILT_IN_FIRESTORE -> {
-                    if (authenticatedUserId.isNullOrBlank()) {
+                    if (builtInRepo == null || authenticatedUserId.isNullOrBlank()) {
                         _connectionStatus.value = ConnectionStatus.DISCONNECTED
-                        _statusError.value = "Sign in with Google in Admin Panel to connect Cloud Firestore."
+                        _statusError.value = if (builtInRepo == null) {
+                            "Use Team Code / RTDB URL tab to connect your live bot."
+                        } else {
+                            "Sign in with Google in Admin Panel to connect Cloud Firestore."
+                        }
                         flowOf(SignalsStreamState.Success(emptyList()))
                     } else {
                         _connectionStatus.value = ConnectionStatus.CONNECTING
@@ -228,7 +232,7 @@ class TradingDeskViewModel(
     private val externalStatsFlow: Flow<TradeStats?> = prefsStore.preferencesFlow.flatMapLatest { prefs ->
         when (prefs.connectionMode) {
             ConnectionMode.BUILT_IN_FIRESTORE -> {
-                if (authenticatedUserId.isNullOrBlank()) {
+                if (builtInRepo == null || authenticatedUserId.isNullOrBlank()) {
                     flowOf(null)
                 } else {
                     builtInRepo.observeStats(authenticatedUserId)
@@ -495,7 +499,8 @@ class TradingDeskViewModel(
                     Result.success(Unit)
                 }
                 ConnectionMode.BUILT_IN_FIRESTORE -> {
-                    builtInRepo.updateSignalStatus(signal, newStatus)
+                    builtInRepo?.updateSignalStatus(signal, newStatus)
+                        ?: Result.failure(IllegalStateException("Built-in Cloud Firestore is unavailable in this build."))
                 }
                 ConnectionMode.CUSTOM_RTDB -> {
                     customRepo.updateRtdbSignalStatus(
@@ -554,8 +559,8 @@ class TradingDeskViewModel(
             val result: Result<TradingSignal> = when (currentPrefsSnapshot.connectionMode) {
                 ConnectionMode.DEMO -> Result.success(demoRepo.injectTestSignal())
                 ConnectionMode.BUILT_IN_FIRESTORE -> {
-                    if (authenticatedUserId.isNullOrBlank()) {
-                        Result.failure(IllegalStateException("Sign in with Google first."))
+                    if (builtInRepo == null || authenticatedUserId.isNullOrBlank()) {
+                        Result.failure(IllegalStateException("Sign in with Google first (requires google-services.json)."))
                     } else {
                         builtInRepo.sendTestSignal()
                     }

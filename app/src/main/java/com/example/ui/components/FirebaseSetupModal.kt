@@ -66,6 +66,7 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.TerminalTheme
 import com.example.viewmodel.TradingDeskUiState
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -406,9 +407,14 @@ private fun BuiltInCloudSyncPanel(
 ) {
     val colors = TerminalTheme.colors
     val context = LocalContext.current
+    val isFirebaseAvailable = remember(context) {
+        FirebaseApp.getApps(context).isNotEmpty()
+    }
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
-    val currentUser = Firebase.auth.currentUser
+    val currentUser = remember(isFirebaseAvailable) {
+        if (isFirebaseAvailable) Firebase.auth.currentUser else null
+    }
     var isAuthLoading by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
 
@@ -426,14 +432,24 @@ private fun BuiltInCloudSyncPanel(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Sync your personal signals & stats across Android devices securely using your Google account.",
+                text = if (isFirebaseAvailable) {
+                    "Sync your personal signals & stats across Android devices securely using your Google account."
+                } else {
+                    "This APK uses Team Code / RTDB URL mode (100% Free). Use the 'Team Code / URL' tab to connect your Python bot."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.textSecondary
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (currentUser == null) {
+            if (!isFirebaseAvailable) {
+                Text(
+                    text = "Tip: Paste your DVX1 Team Code or Firebase RTDB URL in the first tab.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.goldAccent
+                )
+            } else if (currentUser == null) {
                 Button(
                     onClick = {
                         isAuthLoading = true
