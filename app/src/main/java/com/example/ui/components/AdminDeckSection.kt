@@ -16,13 +16,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AdminPanelSettings
+import androidx.compose.material.icons.rounded.AutoGraph
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -34,6 +37,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -65,6 +71,9 @@ fun AdminDeckCard(
     onOpenFirebaseSetup: () -> Unit,
     onSendAdminDiagnostic: () -> Unit,
     onClearAllFirebaseSignals: () -> Unit,
+    onToggleAutoTrackTpSl: (Boolean) -> Unit = {},
+    onToggleAutoSaveCards: (Boolean) -> Unit = {},
+    onToggleShowManualButtons: (Boolean) -> Unit = {},
     onShowMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -445,6 +454,44 @@ fun AdminDeckCard(
                         Text("Save PIN")
                     }
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = colors.borderSubtle)
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = "Automation & Card Engine (100% Free)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = colors.goldAccent
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AdminToggleRow(
+                        icon = Icons.Rounded.AutoGraph,
+                        title = "Auto TP/SL Market Tracker",
+                        subtitle = "Monitors Binance & Gold/Forex prices every 20s and auto-updates TP1/TP2/SL",
+                        checked = uiState.autoTrackTpSlEnabled,
+                        onCheckedChange = onToggleAutoTrackTpSl,
+                        testTag = "toggle_auto_track_tp_sl"
+                    )
+                    AdminToggleRow(
+                        icon = Icons.Rounded.Image,
+                        title = "Auto-Save Order & TP Cards",
+                        subtitle = "Automatically saves Order & Result PNG cards to Pictures/DigitalVertex",
+                        checked = uiState.autoSaveCardImages,
+                        onCheckedChange = onToggleAutoSaveCards,
+                        testTag = "toggle_auto_save_cards"
+                    )
+                    AdminToggleRow(
+                        icon = Icons.Rounded.TouchApp,
+                        title = "Show Manual TP/SL Buttons",
+                        subtitle = "Keep OFF for clean 100% auto mode; turn ON only if manual override needed",
+                        checked = uiState.showManualStatusButtons,
+                        onCheckedChange = onToggleShowManualButtons,
+                        testTag = "toggle_show_manual_buttons"
+                    )
+                }
             }
         }
     }
@@ -481,5 +528,68 @@ fun AdminDeckCard(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun AdminToggleRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    testTag: String
+) {
+    val colors = TerminalTheme.colors
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = colors.surfaceElevated,
+        border = BorderStroke(1.dp, colors.borderSubtle),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (checked) colors.emeraldBuy else colors.textMuted,
+                    modifier = Modifier.size(18.dp)
+                )
+                Column {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.textPrimary
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.textSecondary
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = colors.background,
+                    checkedTrackColor = colors.emeraldBuy,
+                    uncheckedThumbColor = colors.textSecondary,
+                    uncheckedTrackColor = colors.surface
+                ),
+                modifier = Modifier.testTag(testTag)
+            )
+        }
     }
 }

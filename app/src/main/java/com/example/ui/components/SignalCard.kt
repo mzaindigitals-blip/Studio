@@ -1,8 +1,10 @@
 package com.example.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,13 +20,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.TrendingDown
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -35,10 +40,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,6 +59,10 @@ import com.example.model.formatPnlPercent
 import com.example.model.formatPrice
 import com.example.ui.theme.TabularMonoStyle
 import com.example.ui.theme.TerminalTheme
+import com.example.util.ShareCardType
+import com.example.util.SignalCardImageGenerator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -63,6 +75,9 @@ fun SignalCard(
     showAdminActions: Boolean,
     onUpdateStatus: (SignalStatus) -> Unit,
     onDismissNew: () -> Unit,
+    themeKey: String = "OBSIDIAN_GOLD",
+    livePrice: Double? = null,
+    onSaveCard: (ShareCardType) -> Unit = {},
     onShareCard: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -336,6 +351,52 @@ fun SignalCard(
                     }
                 }
 
+                if (status.isOpen && livePrice != null && livePrice > 0.0) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = colors.cyanContainer.copy(alpha = 0.45f),
+                        border = BorderStroke(1.dp, colors.cyanInfo.copy(alpha = 0.35f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(colors.emeraldBuy)
+                                )
+                                Text(
+                                    text = "AUTO TP/SL LIVE",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp
+                                    ),
+                                    color = colors.cyanInfo
+                                )
+                            }
+                            Text(
+                                text = "MKT: ${formatPrice(livePrice, signal.symbol)}",
+                                style = TabularMonoStyle.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = colors.textPrimary
+                            )
+                        }
+                    }
+                }
+
                 if (!signal.notes.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -347,40 +408,166 @@ fun SignalCard(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // 1-Tap Shareable Order / TP Card Image row (Free client-side PNG generator)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
+                // Auto-Generated Order / TP Result Card Image Strip (100% Free Client-Side PNG)
+                val autoCardType = if (status == SignalStatus.ACTIVE) {
+                    ShareCardType.ORDER_ENTRY
+                } else {
+                    ShareCardType.RESULT_HIT
+                }
+                val previewBitmap by produceState<Bitmap?>(
+                    initialValue = null,
+                    signal.id,
+                    signal.status,
+                    signal.pnlPercent,
+                    autoCardType,
+                    themeKey
                 ) {
-                    OutlinedButton(
-                        onClick = onShareCard,
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, colors.goldAccent.copy(alpha = 0.45f)),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = colors.goldContainer.copy(alpha = 0.35f),
-                            contentColor = colors.goldAccent
-                        ),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    value = withContext(Dispatchers.Default) {
+                        SignalCardImageGenerator.getOrRenderPreviewBitmap(
+                            signal = signal,
+                            cardType = autoCardType,
+                            palette = colors,
+                            themeKey = themeKey
+                        )
+                    }
+                }
+                val cardAccent = when {
+                    autoCardType == ShareCardType.ORDER_ENTRY -> colors.goldAccent
+                    status == SignalStatus.SL_HIT -> colors.crimsonSell
+                    else -> colors.emeraldBuy
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = colors.surfaceElevated,
+                    border = BorderStroke(1.dp, cardAccent.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
                         modifier = Modifier
-                            .height(34.dp)
-                            .testTag("btn_share_card_${signal.id}")
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Share,
-                            contentDescription = "Generate shareable card image",
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = if (status == SignalStatus.ACTIVE) "Order Card Image" else "Result Card Image",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 10.sp
+                        Surface(
+                            shape = RoundedCornerShape(7.dp),
+                            color = colors.background,
+                            border = BorderStroke(1.dp, cardAccent.copy(alpha = 0.6f)),
+                            modifier = Modifier
+                                .width(52.dp)
+                                .height(65.dp)
+                                .clip(RoundedCornerShape(7.dp))
+                                .clickable { onShareCard() }
+                                .testTag("card_thumbnail_${signal.id}")
+                        ) {
+                            val bmp = previewBitmap
+                            if (bmp != null && !bmp.isRecycled) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "${signal.symbol} auto card preview",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else {
+                                Box(contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = cardAccent,
+                                        strokeWidth = 2.dp
+                                    )
+                                }
+                            }
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (autoCardType == ShareCardType.ORDER_ENTRY) {
+                                    "Order Card Ready"
+                                } else {
+                                    "${status.label} Card Ready"
+                                },
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = cardAccent,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        )
+                            Text(
+                                text = "Tap image to preview · Save or Share to group",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
+                                color = colors.textMuted,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = { onSaveCard(autoCardType) },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, colors.goldAccent.copy(alpha = 0.55f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(
+                                        containerColor = colors.goldContainer.copy(alpha = 0.25f),
+                                        contentColor = colors.goldAccent
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(36.dp)
+                                        .testTag("btn_save_card_${signal.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Download,
+                                        contentDescription = "Download PNG card",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Save PNG",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.sp
+                                        ),
+                                        maxLines = 1
+                                    )
+                                }
+
+                                Button(
+                                    onClick = onShareCard,
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = colors.emeraldBuy,
+                                        contentColor = colors.background
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(36.dp)
+                                        .testTag("btn_share_card_${signal.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Share,
+                                        contentDescription = "Share card to group",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Share",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 10.sp
+                                        ),
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 

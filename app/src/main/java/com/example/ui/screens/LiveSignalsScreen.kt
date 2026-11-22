@@ -52,9 +52,11 @@ import com.example.model.SignalStatus
 import com.example.model.TradingSignal
 import com.example.ui.components.SignalCard
 import com.example.ui.theme.TerminalTheme
+import com.example.util.ShareCardType
 import com.example.viewmodel.SideFilter
 import com.example.viewmodel.SignalsStreamState
 import com.example.viewmodel.TradingDeskUiState
+import java.util.Locale
 
 @Composable
 fun LiveSignalsScreen(
@@ -67,6 +69,7 @@ fun LiveSignalsScreen(
     onRestoreClearedFeed: () -> Unit,
     onOpenFirebaseSetup: () -> Unit,
     onLoadDemoMode: () -> Unit,
+    onSaveCard: (TradingSignal, ShareCardType) -> Unit = { _, _ -> },
     onShareCard: (TradingSignal) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -94,7 +97,8 @@ fun LiveSignalsScreen(
         }
     }
 
-    val showAdminCardActions = uiState.isAdminUnlocked || uiState.connectionMode == ConnectionMode.DEMO
+    val showAdminCardActions = uiState.showManualStatusButtons &&
+        (uiState.isAdminUnlocked || uiState.connectionMode == ConnectionMode.DEMO)
 
     Column(modifier = modifier.fillMaxSize()) {
         // Filter Bar + Clear / Restore Controls
@@ -295,6 +299,9 @@ fun LiveSignalsScreen(
                                 showAdminActions = showAdminCardActions,
                                 onUpdateStatus = { newStatus -> onUpdateStatus(signal, newStatus) },
                                 onDismissNew = { onDismissNew(signal.id) },
+                                themeKey = uiState.themeId.name,
+                                livePrice = uiState.livePrices[signal.symbol.uppercase(Locale.US)],
+                                onSaveCard = { cardType -> onSaveCard(signal, cardType) },
                                 onShareCard = { onShareCard(signal) }
                             )
                         }

@@ -22,7 +22,10 @@ data class PersistedDeskPreferences(
     val clearedBeforeTimestamp: Long = 0L,
     val historyClearedBeforeTimestamp: Long = 0L,
     val adminPin: String = "2026",
-    val backgroundAlertsEnabled: Boolean = false
+    val backgroundAlertsEnabled: Boolean = false,
+    val autoTrackTpSlEnabled: Boolean = true,
+    val autoSaveCardImages: Boolean = true,
+    val showManualStatusButtons: Boolean = false
 )
 
 class ConfigPreferencesStore(private val context: Context) {
@@ -39,6 +42,9 @@ class ConfigPreferencesStore(private val context: Context) {
         val HISTORY_CLEARED_BEFORE_TS = longPreferencesKey("history_cleared_before_ts")
         val ADMIN_PIN = stringPreferencesKey("admin_pin")
         val BACKGROUND_ALERTS = booleanPreferencesKey("background_alerts_enabled")
+        val AUTO_TRACK_TP_SL = booleanPreferencesKey("auto_track_tp_sl")
+        val AUTO_SAVE_CARD_IMAGES = booleanPreferencesKey("auto_save_card_images")
+        val SHOW_MANUAL_STATUS_BUTTONS = booleanPreferencesKey("show_manual_status_buttons")
     }
 
     val preferencesFlow: Flow<PersistedDeskPreferences> =
@@ -59,7 +65,10 @@ class ConfigPreferencesStore(private val context: Context) {
                 clearedBeforeTimestamp = prefs[Keys.CLEARED_BEFORE_TS] ?: 0L,
                 historyClearedBeforeTimestamp = prefs[Keys.HISTORY_CLEARED_BEFORE_TS] ?: 0L,
                 adminPin = prefs[Keys.ADMIN_PIN] ?: "2026",
-                backgroundAlertsEnabled = prefs[Keys.BACKGROUND_ALERTS] ?: false
+                backgroundAlertsEnabled = prefs[Keys.BACKGROUND_ALERTS] ?: false,
+                autoTrackTpSlEnabled = prefs[Keys.AUTO_TRACK_TP_SL] ?: true,
+                autoSaveCardImages = prefs[Keys.AUTO_SAVE_CARD_IMAGES] ?: true,
+                showManualStatusButtons = prefs[Keys.SHOW_MANUAL_STATUS_BUTTONS] ?: false
             )
         }
 
@@ -113,6 +122,24 @@ class ConfigPreferencesStore(private val context: Context) {
     suspend fun setBackgroundAlertsEnabled(enabled: Boolean) {
         context.signalDeskDataStore.edit { prefs ->
             prefs[Keys.BACKGROUND_ALERTS] = enabled
+        }
+    }
+
+    suspend fun setAutoTrackTpSlEnabled(enabled: Boolean) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.AUTO_TRACK_TP_SL] = enabled
+        }
+    }
+
+    suspend fun setAutoSaveCardImages(enabled: Boolean) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.AUTO_SAVE_CARD_IMAGES] = enabled
+        }
+    }
+
+    suspend fun setShowManualStatusButtons(show: Boolean) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.SHOW_MANUAL_STATUS_BUTTONS] = show
         }
     }
 }

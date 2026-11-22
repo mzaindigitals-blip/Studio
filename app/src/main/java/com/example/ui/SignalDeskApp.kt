@@ -73,14 +73,21 @@ import com.example.ui.screens.BridgeAndSettingsScreen
 import com.example.ui.screens.LiveSignalsScreen
 import com.example.ui.theme.SignalDeskTheme
 import com.example.ui.theme.TerminalTheme
+import com.example.ui.theme.paletteForTheme
+import com.example.util.ShareCardType
+import com.example.util.SignalCardImageGenerator
 import com.example.viewmodel.TradingDeskUiState
 import com.example.viewmodel.TradingDeskViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class DeskTab(
     val title: String,
@@ -136,13 +143,32 @@ fun SignalDeskApp() {
                     } else {
                         null
                     }
+                    val appContext = app.applicationContext
+                    val autoSaveScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
                     TradingDeskViewModel(
                         builtInRepo = builtInRepo,
-                        customRepo = CustomFirebaseRepository(app.applicationContext),
+                        customRepo = CustomFirebaseRepository(appContext),
                         demoRepo = DemoSignalRepository(),
-                        prefsStore = ConfigPreferencesStore(app.applicationContext),
+                        prefsStore = ConfigPreferencesStore(appContext),
                         soundPlayer = SoundAlertPlayer(),
-                        authenticatedUserId = currentUser?.uid
+                        authenticatedUserId = currentUser?.uid,
+                        onAutoSaveCard = { signal, cardType, themeId ->
+                            autoSaveScope.launch {
+                                val palette = paletteForTheme(themeId)
+                                val bitmap = SignalCardImageGenerator.getOrRenderPreviewBitmap(
+                                    signal = signal,
+                                    cardType = cardType,
+                                    palette = palette,
+                                    themeKey = themeId.name
+                                )
+                                SignalCardImageGenerator.saveSignalCardToGallery(
+                                    context = appContext,
+                                    bitmap = bitmap,
+                                    signal = signal,
+                                    cardType = cardType
+                                )
+                            }
+                        }
                     )
                 }
             }
@@ -330,6 +356,31 @@ private fun SignalDeskScaffold(
                         onToggleBackgroundAlerts = handleToggleBackgroundAlerts
                     )
 
+                    val saveCardDirectly: (TradingSignal, ShareCardType) -> Unit = { sig, cardType ->
+                        scope.launch {
+                            val palette = paletteForTheme(uiState.themeId)
+                            val saveResult = withContext(Dispatchers.IO) {
+                                val bitmap = SignalCardImageGenerator.getOrRenderPreviewBitmap(
+                                    signal = sig,
+                                    cardType = cardType,
+                                    palette = palette,
+                                    themeKey = uiState.themeId.name
+                                )
+                                SignalCardImageGenerator.saveSignalCardToGallery(
+                                    context = context,
+                                    bitmap = bitmap,
+                                    signal = sig,
+                                    cardType = cardType
+                                )
+                            }
+                            saveResult.onSuccess { msg ->
+                                snackbarHostState.showSnackbar("${sig.symbol} ${cardType.label}: $msg")
+                            }.onFailure { err ->
+                                snackbarHostState.showSnackbar(err.localizedMessage ?: "Failed to save image")
+                            }
+                        }
+                    }
+
                     Box(modifier = Modifier.weight(1f)) {
                         when (currentTab) {
                             DeskTab.LIVE_SIGNALS -> {
@@ -343,6 +394,7 @@ private fun SignalDeskScaffold(
                                     onRestoreClearedFeed = viewModel::restoreClearedFeed,
                                     onOpenFirebaseSetup = { showFirebaseModal = true },
                                     onLoadDemoMode = { viewModel.loadDemoMode(resetData = true) },
+                                    onSaveCard = saveCardDirectly,
                                     onShareCard = { shareCardSignal = it }
                                 )
                             }
@@ -355,6 +407,7 @@ private fun SignalDeskScaffold(
                                     onDismissNew = viewModel::dismissNewBadge,
                                     onClearLocalHistoryFeed = viewModel::clearLocalHistoryFeed,
                                     onRestoreClearedHistoryFeed = viewModel::restoreClearedHistoryFeed,
+                                    onSaveCard = saveCardDirectly,
                                     onShareCard = { shareCardSignal = it }
                                 )
                             }
@@ -372,6 +425,9 @@ private fun SignalDeskScaffold(
                                     onUpdateAdminPin = viewModel::updateAdminPin,
                                     onSendAdminDiagnostic = viewModel::sendAdminDiagnosticSignal,
                                     onClearAllFirebaseSignals = viewModel::clearAllFirebaseSignals,
+                                    onToggleAutoTrackTpSl = viewModel::setAutoTrackTpSlEnabled,
+                                    onToggleAutoSaveCards = viewModel::setAutoSaveCardImages,
+                                    onToggleShowManualButtons = viewModel::setShowManualStatusButtons,
                                     onShowMessage = { msg ->
                                         scope.launch { snackbarHostState.showSnackbar(msg) }
                                     }

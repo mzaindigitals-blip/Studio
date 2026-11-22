@@ -53,8 +53,10 @@ import com.example.model.roundToTwoDecimals
 import com.example.ui.components.SignalCard
 import com.example.ui.theme.TabularMonoStyle
 import com.example.ui.theme.TerminalTheme
+import com.example.util.ShareCardType
 import com.example.viewmodel.HistoryRange
 import com.example.viewmodel.TradingDeskUiState
+import java.util.Locale
 
 @Composable
 fun ActiveHistoryScreen(
@@ -65,6 +67,7 @@ fun ActiveHistoryScreen(
     onDismissNew: (String) -> Unit,
     onClearLocalHistoryFeed: () -> Unit = {},
     onRestoreClearedHistoryFeed: () -> Unit = {},
+    onSaveCard: (TradingSignal, ShareCardType) -> Unit = { _, _ -> },
     onShareCard: (TradingSignal) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -92,7 +95,8 @@ fun ActiveHistoryScreen(
     }
 
     val displayedTrades = if (uiState.activeHistorySegment == 0) openTrades else filteredClosedTrades
-    val showAdminCardActions = uiState.isAdminUnlocked || uiState.connectionMode == ConnectionMode.DEMO
+    val showAdminCardActions = uiState.showManualStatusButtons &&
+        (uiState.isAdminUnlocked || uiState.connectionMode == ConnectionMode.DEMO)
 
     Column(modifier = modifier.fillMaxSize()) {
         Row(
@@ -327,6 +331,9 @@ fun ActiveHistoryScreen(
                         showAdminActions = showAdminCardActions,
                         onUpdateStatus = { newStatus -> onUpdateStatus(signal, newStatus) },
                         onDismissNew = { onDismissNew(signal.id) },
+                        themeKey = uiState.themeId.name,
+                        livePrice = uiState.livePrices[signal.symbol.uppercase(Locale.US)],
+                        onSaveCard = { cardType -> onSaveCard(signal, cardType) },
                         onShareCard = { onShareCard(signal) }
                     )
                 }

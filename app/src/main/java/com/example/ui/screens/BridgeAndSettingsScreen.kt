@@ -130,6 +130,9 @@ fun BridgeAndSettingsScreen(
     onUpdateAdminPin: (String) -> Unit,
     onSendAdminDiagnostic: () -> Unit,
     onClearAllFirebaseSignals: () -> Unit,
+    onToggleAutoTrackTpSl: (Boolean) -> Unit = {},
+    onToggleAutoSaveCards: (Boolean) -> Unit = {},
+    onToggleShowManualButtons: (Boolean) -> Unit = {},
     onShowMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -411,6 +414,9 @@ fun BridgeAndSettingsScreen(
                 onOpenFirebaseSetup = onOpenFirebaseSetup,
                 onSendAdminDiagnostic = onSendAdminDiagnostic,
                 onClearAllFirebaseSignals = onClearAllFirebaseSignals,
+                onToggleAutoTrackTpSl = onToggleAutoTrackTpSl,
+                onToggleAutoSaveCards = onToggleAutoSaveCards,
+                onToggleShowManualButtons = onToggleShowManualButtons,
                 onShowMessage = onShowMessage
             )
         }

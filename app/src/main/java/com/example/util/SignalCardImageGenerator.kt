@@ -13,6 +13,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.LruCache
 import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.FileProvider
 import com.example.model.SignalSide
@@ -36,6 +37,23 @@ object SignalCardImageGenerator {
 
     private const val WIDTH = 1080
     private const val HEIGHT = 1350
+
+    private val previewCache = LruCache<String, Bitmap>(24)
+
+    fun getOrRenderPreviewBitmap(
+        signal: TradingSignal,
+        cardType: ShareCardType,
+        palette: TerminalPalette,
+        themeKey: String
+    ): Bitmap {
+        val key = "${signal.id}_${signal.status}_${cardType.name}_$themeKey"
+        previewCache.get(key)?.let { cached ->
+            if (!cached.isRecycled) return cached
+        }
+        val rendered = renderSignalCardBitmap(signal, cardType, palette)
+        previewCache.put(key, rendered)
+        return rendered
+    }
 
     fun renderSignalCardBitmap(
         signal: TradingSignal,

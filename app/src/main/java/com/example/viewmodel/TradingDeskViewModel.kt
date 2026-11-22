@@ -7,6 +7,7 @@ import com.example.data.BuiltInFirestoreRepository
 import com.example.data.ConfigPreferencesStore
 import com.example.data.CustomFirebaseRepository
 import com.example.data.DemoSignalRepository
+import com.example.data.MarketPriceMonitor
 import com.example.data.PersistedDeskPreferences
 import com.example.data.SoundAlertPlayer
 import com.example.model.ConnectionMode
@@ -18,9 +19,11 @@ import com.example.model.TradingSignal
 import com.example.model.calculateTradeStats
 import com.example.model.formatPnlPercent
 import com.example.ui.theme.DeskThemeId
+import com.example.util.ShareCardType
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,7 +38,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 enum class SideFilter(val label: String) {
     ALL("ALL"),
@@ -66,6 +71,10 @@ data class TradingDeskUiState(
     val isAdminUnlocked: Boolean = false,
     val adminPin: String = "2026",
     val backgroundAlertsEnabled: Boolean = false,
+    val autoTrackTpSlEnabled: Boolean = true,
+    val autoSaveCardImages: Boolean = true,
+    val showManualStatusButtons: Boolean = false,
+    val livePrices: Map<String, Double> = emptyMap(),
     val signalsState: SignalsStreamState = SignalsStreamState.Loading,
     val signals: List<TradingSignal> = emptyList(),
     val visibleLiveSignals: List<TradingSignal> = emptyList(),
@@ -92,7 +101,9 @@ class TradingDeskViewModel(
     private val demoRepo: DemoSignalRepository,
     private val prefsStore: ConfigPreferencesStore,
     private val soundPlayer: SoundAlertPlayer,
-    private val authenticatedUserId: String?
+    private val authenticatedUserId: String?,
+    private val marketPriceMonitor: MarketPriceMonitor = MarketPriceMonitor(),
+    private val onAutoSaveCard: (TradingSignal, ShareCardType, DeskThemeId) -> Unit = { _, _, _ -> }
 ) : ViewModel() {
 
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.DEMO_MODE)
@@ -106,13 +117,22 @@ class TradingDeskViewModel(
     private val _isClearingFirebase = MutableStateFlow(false)
     private val _isAdminUnlocked = MutableStateFlow(false)
     private val _updatingSignalIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _livePrices = MutableStateFlow<Map<String, Double>>(emptyMap())
 
     private val _snackbarEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snackbarEvents = _snackbarEvents.asSharedFlow()
 
     private val knownSignalStatuses = mutableMapOf<String, SignalStatus>()
+    private val autoTriggeredKeys = mutableSetOf<String>()
+    private val autoSavedCardKeys = mutableSetOf<String>()
+    @Volatile
+    private var latestSignalsSnapshot: List<TradingSignal> = emptyList()
     private var initialEmissionCaptured = false
     private var currentPrefsSnapshot = PersistedDeskPreferences()
+
+    init {
+        startMarketPriceWatcher()
+    }
 
     private val streamFlow: Flow<SignalsStreamState> = prefsStore.preferencesFlow
         .onEach { prefs ->
@@ -120,6 +140,10 @@ class TradingDeskViewModel(
                 prefs.customConfig != currentPrefsSnapshot.customConfig
             ) {
                 knownSignalStatuses.clear()
+                autoTriggeredKeys.clear()
+                autoSavedCardKeys.clear()
+                latestSignalsSnapshot = emptyList()
+                _livePrices.value = emptyMap()
                 initialEmissionCaptured = false
                 _highlightedNewIds.value = emptySet()
             }
@@ -229,6 +253,7 @@ class TradingDeskViewModel(
         }
         .onEach { state ->
             if (state is SignalsStreamState.Success) {
+                latestSignalsSnapshot = state.signals
                 detectIncomingSignals(state.signals, currentPrefsSnapshot.isSoundMuted)
             }
         }
@@ -274,9 +299,10 @@ class TradingDeskViewModel(
 
     private val adminBundleFlow = combine(
         _isAdminUnlocked,
-        _updatingSignalIds
-    ) { adminUnlocked, updating ->
-        adminUnlocked to updating
+        _updatingSignalIds,
+        _livePrices
+    ) { adminUnlocked, updating, prices ->
+        AdminBundle(adminUnlocked, updating, prices)
     }
 
     val uiState: StateFlow<TradingDeskUiState> = combine(
@@ -292,8 +318,7 @@ class TradingDeskViewModel(
         val syncedStats = values[2] as TradeStats?
         val filters = values[3] as FilterBundle
         val statusBundle = values[4] as StatusBundle
-        @Suppress("UNCHECKED_CAST")
-        val adminBundle = values[5] as Pair<Boolean, Set<String>>
+        val adminBundle = values[5] as AdminBundle
 
         val signalList = (stream as? SignalsStreamState.Success)?.signals.orEmpty()
         val visibleLive = signalList.filter { it.effectiveTimestampMillis() > prefs.clearedBeforeTimestamp }
@@ -311,9 +336,13 @@ class TradingDeskViewModel(
             themeId = prefs.themeId,
             clearedBeforeTimestamp = prefs.clearedBeforeTimestamp,
             historyClearedBeforeTimestamp = prefs.historyClearedBeforeTimestamp,
-            isAdminUnlocked = adminBundle.first,
+            isAdminUnlocked = adminBundle.isAdminUnlocked,
             adminPin = prefs.adminPin,
             backgroundAlertsEnabled = prefs.backgroundAlertsEnabled,
+            autoTrackTpSlEnabled = prefs.autoTrackTpSlEnabled,
+            autoSaveCardImages = prefs.autoSaveCardImages,
+            showManualStatusButtons = prefs.showManualStatusButtons,
+            livePrices = adminBundle.livePrices,
             signalsState = stream,
             signals = signalList,
             visibleLiveSignals = visibleLive,
@@ -329,7 +358,7 @@ class TradingDeskViewModel(
             statusError = statusBundle.statusError,
             isSendingTestSignal = statusBundle.isSendingTestSignal,
             isClearingFirebase = statusBundle.isClearingFirebase,
-            updatingSignalIds = adminBundle.second,
+            updatingSignalIds = adminBundle.updatingSignalIds,
             authenticatedUserId = authenticatedUserId
         )
     }.stateIn(
@@ -337,6 +366,38 @@ class TradingDeskViewModel(
         started = SharingStarted.WhileSubscribed(5000L),
         initialValue = TradingDeskUiState(authenticatedUserId = authenticatedUserId)
     )
+
+    private fun startMarketPriceWatcher() {
+        viewModelScope.launch {
+            delay(2_000L)
+            while (isActive) {
+                val prefs = currentPrefsSnapshot
+                val isLiveStream = prefs.connectionMode == ConnectionMode.CUSTOM_RTDB ||
+                    prefs.connectionMode == ConnectionMode.CUSTOM_FIRESTORE
+                if (isLiveStream && prefs.autoTrackTpSlEnabled) {
+                    val openSignals = latestSignalsSnapshot.filter { it.parsedStatus.isOpen }
+                    if (openSignals.isNotEmpty()) {
+                        val symbols = openSignals.map { it.symbol.uppercase(Locale.US) }.toSet()
+                        val fetchedPrices = runCatching { marketPriceMonitor.fetchLivePrices(symbols) }
+                            .getOrDefault(emptyMap())
+                        if (fetchedPrices.isNotEmpty()) {
+                            _livePrices.update { existing -> existing + fetchedPrices }
+                            openSignals.forEach { sig ->
+                                val livePrice = fetchedPrices[sig.symbol.uppercase(Locale.US)] ?: return@forEach
+                                val hitStatus = MarketPriceMonitor.evaluateAutoStatus(sig, livePrice)
+                                    ?: return@forEach
+                                val guardKey = "${sig.id}_${hitStatus.name}"
+                                if (sig.parsedStatus != hitStatus && autoTriggeredKeys.add(guardKey)) {
+                                    performStatusUpdate(sig, hitStatus, isAutoTriggered = true)
+                                }
+                            }
+                        }
+                    }
+                }
+                delay(20_000L)
+            }
+        }
+    }
 
     private fun detectIncomingSignals(signals: List<TradingSignal>, isMuted: Boolean) {
         val validSignals = signals.filter { it.id.isNotBlank() }
@@ -348,6 +409,7 @@ class TradingDeskViewModel(
 
         val newlyArrivedIds = mutableSetOf<String>()
         val statusChanged = mutableListOf<TradingSignal>()
+        val newlyArrivedSignals = mutableListOf<TradingSignal>()
 
         validSignals.forEach { sig ->
             val prevStatus = knownSignalStatuses[sig.id]
@@ -355,11 +417,33 @@ class TradingDeskViewModel(
             if (prevStatus == null) {
                 knownSignalStatuses[sig.id] = currentStatus
                 newlyArrivedIds.add(sig.id)
+                newlyArrivedSignals.add(sig)
             } else if (prevStatus != currentStatus) {
                 knownSignalStatuses[sig.id] = currentStatus
                 if (currentStatus != SignalStatus.ACTIVE) {
                     newlyArrivedIds.add(sig.id)
                     statusChanged.add(sig)
+                }
+            }
+        }
+
+        if (currentPrefsSnapshot.autoSaveCardImages) {
+            val activeTheme = currentPrefsSnapshot.themeId
+            newlyArrivedSignals.forEach { arrived ->
+                val cardType = if (arrived.parsedStatus == SignalStatus.ACTIVE) {
+                    ShareCardType.ORDER_ENTRY
+                } else {
+                    ShareCardType.RESULT_HIT
+                }
+                val saveKey = "${arrived.id}_${cardType.name}_${arrived.status}"
+                if (autoSavedCardKeys.add(saveKey)) {
+                    onAutoSaveCard(arrived, cardType, activeTheme)
+                }
+            }
+            statusChanged.forEach { changed ->
+                val saveKey = "${changed.id}_RESULT_${changed.parsedStatus.name}"
+                if (autoSavedCardKeys.add(saveKey)) {
+                    onAutoSaveCard(changed, ShareCardType.RESULT_HIT, activeTheme)
                 }
             }
         }
@@ -476,6 +560,33 @@ class TradingDeskViewModel(
         }
     }
 
+    fun setAutoTrackTpSlEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefsStore.setAutoTrackTpSlEnabled(enabled)
+            _snackbarEvents.tryEmit(
+                if (enabled) "Auto TP/SL live price tracker enabled" else "Auto TP/SL tracker paused"
+            )
+        }
+    }
+
+    fun setAutoSaveCardImages(enabled: Boolean) {
+        viewModelScope.launch {
+            prefsStore.setAutoSaveCardImages(enabled)
+            _snackbarEvents.tryEmit(
+                if (enabled) "Auto-save Order & TP cards to Gallery enabled" else "Auto-save card images turned off"
+            )
+        }
+    }
+
+    fun setShowManualStatusButtons(show: Boolean) {
+        viewModelScope.launch {
+            prefsStore.setShowManualStatusButtons(show)
+            _snackbarEvents.tryEmit(
+                if (show) "Manual TP/SL override buttons shown" else "Manual TP/SL buttons hidden (100% Auto mode)"
+            )
+        }
+    }
+
     fun toggleSoundMute() {
         viewModelScope.launch {
             val nextMuted = !currentPrefsSnapshot.isSoundMuted
@@ -542,6 +653,14 @@ class TradingDeskViewModel(
             _snackbarEvents.tryEmit("Unlock Admin Mode to update Firebase signal status")
             return
         }
+        performStatusUpdate(signal, newStatus, isAutoTriggered = false)
+    }
+
+    private fun performStatusUpdate(
+        signal: TradingSignal,
+        newStatus: SignalStatus,
+        isAutoTriggered: Boolean
+    ) {
         if (signal.id.isBlank()) return
         viewModelScope.launch {
             _updatingSignalIds.update { it + signal.id }
@@ -572,9 +691,19 @@ class TradingDeskViewModel(
             }
             _updatingSignalIds.update { it - signal.id }
             result.onSuccess {
-                _snackbarEvents.tryEmit("${signal.symbol} marked ${newStatus.label}")
+                val prefix = if (isAutoTriggered) "Auto-Detected: " else ""
+                val pnlStr = if (isAutoTriggered) {
+                    " (${formatPnlPercent(signal.calculatePnlForStatus(newStatus))})"
+                } else {
+                    ""
+                }
+                _snackbarEvents.tryEmit("$prefix${signal.symbol} marked ${newStatus.label}$pnlStr")
             }.onFailure { err ->
-                _snackbarEvents.tryEmit(err.localizedMessage ?: "Failed to update ${signal.symbol}")
+                if (!isAutoTriggered) {
+                    _snackbarEvents.tryEmit(err.localizedMessage ?: "Failed to update ${signal.symbol}")
+                } else {
+                    autoTriggeredKeys.remove("${signal.id}_${newStatus.name}")
+                }
             }
         }
     }
@@ -647,6 +776,12 @@ class TradingDeskViewModel(
         val highlightedNewIds: Set<String>,
         val isSendingTestSignal: Boolean,
         val isClearingFirebase: Boolean
+    )
+
+    private data class AdminBundle(
+        val isAdminUnlocked: Boolean,
+        val updatingSignalIds: Set<String>,
+        val livePrices: Map<String, Double>
     )
 
     private companion object {
