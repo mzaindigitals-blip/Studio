@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.rounded.TrendingDown
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -62,6 +63,7 @@ fun SignalCard(
     showAdminActions: Boolean,
     onUpdateStatus: (SignalStatus) -> Unit,
     onDismissNew: () -> Unit,
+    onShareCard: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = TerminalTheme.colors
@@ -343,6 +345,43 @@ fun SignalCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // 1-Tap Shareable Order / TP Card Image row (Free client-side PNG generator)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = onShareCard,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, colors.goldAccent.copy(alpha = 0.45f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = colors.goldContainer.copy(alpha = 0.35f),
+                            contentColor = colors.goldAccent
+                        ),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                        modifier = Modifier
+                            .height(34.dp)
+                            .testTag("btn_share_card_${signal.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Share,
+                            contentDescription = "Generate shareable card image",
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = if (status == SignalStatus.ACTIVE) "Order Card Image" else "Result Card Image",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp
+                            )
+                        )
+                    }
                 }
 
                 // Quick Actions visible ONLY in Admin Mode (or Demo Mode) for Open Trades

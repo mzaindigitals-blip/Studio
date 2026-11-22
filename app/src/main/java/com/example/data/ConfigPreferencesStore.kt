@@ -20,6 +20,7 @@ data class PersistedDeskPreferences(
     val isSoundMuted: Boolean = false,
     val themeId: DeskThemeId = DeskThemeId.OBSIDIAN_GOLD,
     val clearedBeforeTimestamp: Long = 0L,
+    val historyClearedBeforeTimestamp: Long = 0L,
     val adminPin: String = "2026",
     val backgroundAlertsEnabled: Boolean = false
 )
@@ -35,6 +36,7 @@ class ConfigPreferencesStore(private val context: Context) {
         val SOUND_MUTED = booleanPreferencesKey("sound_muted")
         val THEME_ID = stringPreferencesKey("theme_id")
         val CLEARED_BEFORE_TS = longPreferencesKey("cleared_before_ts")
+        val HISTORY_CLEARED_BEFORE_TS = longPreferencesKey("history_cleared_before_ts")
         val ADMIN_PIN = stringPreferencesKey("admin_pin")
         val BACKGROUND_ALERTS = booleanPreferencesKey("background_alerts_enabled")
     }
@@ -55,6 +57,7 @@ class ConfigPreferencesStore(private val context: Context) {
                 isSoundMuted = prefs[Keys.SOUND_MUTED] ?: false,
                 themeId = DeskThemeId.fromRaw(prefs[Keys.THEME_ID]),
                 clearedBeforeTimestamp = prefs[Keys.CLEARED_BEFORE_TS] ?: 0L,
+                historyClearedBeforeTimestamp = prefs[Keys.HISTORY_CLEARED_BEFORE_TS] ?: 0L,
                 adminPin = prefs[Keys.ADMIN_PIN] ?: "2026",
                 backgroundAlertsEnabled = prefs[Keys.BACKGROUND_ALERTS] ?: false
             )
@@ -92,6 +95,12 @@ class ConfigPreferencesStore(private val context: Context) {
     suspend fun setClearedBeforeTimestamp(timestampMillis: Long) {
         context.signalDeskDataStore.edit { prefs ->
             prefs[Keys.CLEARED_BEFORE_TS] = timestampMillis
+        }
+    }
+
+    suspend fun setHistoryClearedBeforeTimestamp(timestampMillis: Long) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.HISTORY_CLEARED_BEFORE_TS] = timestampMillis
         }
     }
 

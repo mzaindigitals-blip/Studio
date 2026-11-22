@@ -67,6 +67,7 @@ fun LiveSignalsScreen(
     onRestoreClearedFeed: () -> Unit,
     onOpenFirebaseSetup: () -> Unit,
     onLoadDemoMode: () -> Unit,
+    onShareCard: (TradingSignal) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = TerminalTheme.colors
@@ -293,7 +294,8 @@ fun LiveSignalsScreen(
                                 isUpdating = signal.id in uiState.updatingSignalIds,
                                 showAdminActions = showAdminCardActions,
                                 onUpdateStatus = { newStatus -> onUpdateStatus(signal, newStatus) },
-                                onDismissNew = { onDismissNew(signal.id) }
+                                onDismissNew = { onDismissNew(signal.id) },
+                                onShareCard = { onShareCard(signal) }
                             )
                         }
                     }

@@ -63,8 +63,10 @@ import com.example.data.DemoSignalRepository
 import com.example.data.SoundAlertPlayer
 import com.example.data.authStateFlow
 import com.example.model.ConnectionMode
+import com.example.model.TradingSignal
 import com.example.service.SignalMonitorService
 import com.example.ui.components.FirebaseSetupModal
+import com.example.ui.components.ShareSignalCardDialog
 import com.example.ui.components.TerminalHeaderAndStats
 import com.example.ui.screens.ActiveHistoryScreen
 import com.example.ui.screens.BridgeAndSettingsScreen
@@ -166,6 +168,7 @@ private fun SignalDeskScaffold(
     val context = LocalContext.current
     var currentTab by remember { mutableStateOf(DeskTab.LIVE_SIGNALS) }
     var showFirebaseModal by remember { mutableStateOf(false) }
+    var shareCardSignal by remember { mutableStateOf<TradingSignal?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -339,7 +342,8 @@ private fun SignalDeskScaffold(
                                     onClearLocalFeed = viewModel::clearLocalFeed,
                                     onRestoreClearedFeed = viewModel::restoreClearedFeed,
                                     onOpenFirebaseSetup = { showFirebaseModal = true },
-                                    onLoadDemoMode = { viewModel.loadDemoMode(resetData = true) }
+                                    onLoadDemoMode = { viewModel.loadDemoMode(resetData = true) },
+                                    onShareCard = { shareCardSignal = it }
                                 )
                             }
                             DeskTab.ACTIVE_HISTORY -> {
@@ -348,7 +352,10 @@ private fun SignalDeskScaffold(
                                     onSelectSegment = viewModel::setActiveHistorySegment,
                                     onSelectHistoryRange = viewModel::setHistoryRange,
                                     onUpdateStatus = viewModel::updateSignalStatus,
-                                    onDismissNew = viewModel::dismissNewBadge
+                                    onDismissNew = viewModel::dismissNewBadge,
+                                    onClearLocalHistoryFeed = viewModel::clearLocalHistoryFeed,
+                                    onRestoreClearedHistoryFeed = viewModel::restoreClearedHistoryFeed,
+                                    onShareCard = { shareCardSignal = it }
                                 )
                             }
                             DeskTab.DESK_ADMIN -> {
@@ -385,6 +392,16 @@ private fun SignalDeskScaffold(
             onLoadDemoMode = { viewModel.loadDemoMode(resetData = true) },
             onConnectBuiltInCloud = viewModel::connectBuiltInCloud,
             onSendAdminDiagnostic = viewModel::sendAdminDiagnosticSignal
+        )
+    }
+
+    shareCardSignal?.let { targetSignal ->
+        ShareSignalCardDialog(
+            signal = targetSignal,
+            onDismiss = { shareCardSignal = null },
+            onShowMessage = { msg ->
+                scope.launch { snackbarHostState.showSnackbar(msg) }
+            }
         )
     }
 }

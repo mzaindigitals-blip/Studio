@@ -11,6 +11,7 @@ import androidx.core.app.ServiceCompat
 import com.example.data.ConfigPreferencesStore
 import com.example.data.CustomFirebaseRepository
 import com.example.model.ConnectionMode
+import com.example.model.SignalStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +33,7 @@ class SignalMonitorService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
 
-    private val seenIds = mutableSetOf<String>()
+    private val seenStatuses = mutableMapOf<String, SignalStatus>()
     private var initialSnapshotProcessed = false
     private var currentConfigKey = ""
 
@@ -77,7 +78,7 @@ class SignalMonitorService : Service() {
                     val nextKey = "${prefs.connectionMode}:${prefs.customConfig.databaseURL}:${prefs.customConfig.projectId}"
                     if (nextKey != currentConfigKey) {
                         currentConfigKey = nextKey
-                        seenIds.clear()
+                        seenStatuses.clear()
                         initialSnapshotProcessed = false
                     }
 
@@ -107,17 +108,27 @@ class SignalMonitorService : Service() {
                     }
                 }
                 .collectLatest { signals ->
-                    val ids = signals.mapNotNull { it.id.takeIf(String::isNotBlank) }
+                    val validSignals = signals.filter { it.id.isNotBlank() }
                     if (!initialSnapshotProcessed) {
-                        seenIds.addAll(ids)
+                        validSignals.forEach { seenStatuses[it.id] = it.parsedStatus }
                         initialSnapshotProcessed = true
                         return@collectLatest
                     }
-                    val newlyArrived = signals.filter { it.id.isNotBlank() && it.id !in seenIds }
-                    if (newlyArrived.isNotEmpty()) {
-                        seenIds.addAll(newlyArrived.map { it.id })
-                        newlyArrived.forEach { signal ->
+                    validSignals.forEach { signal ->
+                        val previousStatus = seenStatuses[signal.id]
+                        val currentStatus = signal.parsedStatus
+                        if (previousStatus == null) {
+                            seenStatuses[signal.id] = currentStatus
                             SignalNotificationHelper.showNewSignalNotification(applicationContext, signal)
+                        } else if (previousStatus != currentStatus) {
+                            seenStatuses[signal.id] = currentStatus
+                            if (currentStatus != SignalStatus.ACTIVE) {
+                                SignalNotificationHelper.showStatusUpdateNotification(
+                                    applicationContext,
+                                    signal,
+                                    currentStatus
+                                )
+                            }
                         }
                     }
                 }

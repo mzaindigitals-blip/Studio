@@ -16,6 +16,7 @@ import com.example.model.SignalStatus
 import com.example.model.TradeStats
 import com.example.model.TradingSignal
 import com.example.model.calculateTradeStats
+import com.example.model.formatPnlPercent
 import com.example.ui.theme.DeskThemeId
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
@@ -61,6 +62,7 @@ data class TradingDeskUiState(
     val isSoundMuted: Boolean = false,
     val themeId: DeskThemeId = DeskThemeId.OBSIDIAN_GOLD,
     val clearedBeforeTimestamp: Long = 0L,
+    val historyClearedBeforeTimestamp: Long = 0L,
     val isAdminUnlocked: Boolean = false,
     val adminPin: String = "2026",
     val backgroundAlertsEnabled: Boolean = false,
@@ -68,6 +70,8 @@ data class TradingDeskUiState(
     val signals: List<TradingSignal> = emptyList(),
     val visibleLiveSignals: List<TradingSignal> = emptyList(),
     val clearedSignalsCount: Int = 0,
+    val visibleHistorySignals: List<TradingSignal> = emptyList(),
+    val clearedHistoryCount: Int = 0,
     val stats: TradeStats = TradeStats(),
     val highlightedNewIds: Set<String> = emptySet(),
     val sideFilter: SideFilter = SideFilter.ALL,
@@ -106,7 +110,7 @@ class TradingDeskViewModel(
     private val _snackbarEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snackbarEvents = _snackbarEvents.asSharedFlow()
 
-    private val knownSignalIds = mutableSetOf<String>()
+    private val knownSignalStatuses = mutableMapOf<String, SignalStatus>()
     private var initialEmissionCaptured = false
     private var currentPrefsSnapshot = PersistedDeskPreferences()
 
@@ -115,7 +119,7 @@ class TradingDeskViewModel(
             if (prefs.connectionMode != currentPrefsSnapshot.connectionMode ||
                 prefs.customConfig != currentPrefsSnapshot.customConfig
             ) {
-                knownSignalIds.clear()
+                knownSignalStatuses.clear()
                 initialEmissionCaptured = false
                 _highlightedNewIds.value = emptySet()
             }
@@ -294,6 +298,8 @@ class TradingDeskViewModel(
         val signalList = (stream as? SignalsStreamState.Success)?.signals.orEmpty()
         val visibleLive = signalList.filter { it.effectiveTimestampMillis() > prefs.clearedBeforeTimestamp }
         val clearedCount = (signalList.size - visibleLive.size).coerceAtLeast(0)
+        val visibleHistory = signalList.filter { it.effectiveTimestampMillis() > prefs.historyClearedBeforeTimestamp }
+        val clearedHistoryCnt = (signalList.size - visibleHistory.size).coerceAtLeast(0)
         val computedStats = calculateTradeStats(signalList)
         val effectiveStats = if (signalList.isNotEmpty()) computedStats else (syncedStats ?: computedStats)
 
@@ -304,6 +310,7 @@ class TradingDeskViewModel(
             isSoundMuted = prefs.isSoundMuted,
             themeId = prefs.themeId,
             clearedBeforeTimestamp = prefs.clearedBeforeTimestamp,
+            historyClearedBeforeTimestamp = prefs.historyClearedBeforeTimestamp,
             isAdminUnlocked = adminBundle.first,
             adminPin = prefs.adminPin,
             backgroundAlertsEnabled = prefs.backgroundAlertsEnabled,
@@ -311,6 +318,8 @@ class TradingDeskViewModel(
             signals = signalList,
             visibleLiveSignals = visibleLive,
             clearedSignalsCount = clearedCount,
+            visibleHistorySignals = visibleHistory,
+            clearedHistoryCount = clearedHistoryCnt,
             stats = effectiveStats,
             highlightedNewIds = statusBundle.highlightedNewIds,
             sideFilter = filters.sideFilter,
@@ -330,18 +339,43 @@ class TradingDeskViewModel(
     )
 
     private fun detectIncomingSignals(signals: List<TradingSignal>, isMuted: Boolean) {
-        val currentIds = signals.mapNotNull { it.id.takeIf(String::isNotBlank) }.toSet()
+        val validSignals = signals.filter { it.id.isNotBlank() }
         if (!initialEmissionCaptured) {
-            knownSignalIds.addAll(currentIds)
+            validSignals.forEach { knownSignalStatuses[it.id] = it.parsedStatus }
             initialEmissionCaptured = true
             return
         }
-        val arrived = currentIds - knownSignalIds
-        if (arrived.isNotEmpty()) {
-            knownSignalIds.addAll(arrived)
-            _highlightedNewIds.update { it + arrived }
+
+        val newlyArrivedIds = mutableSetOf<String>()
+        val statusChanged = mutableListOf<TradingSignal>()
+
+        validSignals.forEach { sig ->
+            val prevStatus = knownSignalStatuses[sig.id]
+            val currentStatus = sig.parsedStatus
+            if (prevStatus == null) {
+                knownSignalStatuses[sig.id] = currentStatus
+                newlyArrivedIds.add(sig.id)
+            } else if (prevStatus != currentStatus) {
+                knownSignalStatuses[sig.id] = currentStatus
+                if (currentStatus != SignalStatus.ACTIVE) {
+                    newlyArrivedIds.add(sig.id)
+                    statusChanged.add(sig)
+                }
+            }
+        }
+
+        if (newlyArrivedIds.isNotEmpty()) {
+            _highlightedNewIds.update { it + newlyArrivedIds }
             if (!isMuted) {
                 soundPlayer.playSignalAlert()
+            }
+            statusChanged.firstOrNull()?.let { changed ->
+                val pnl = if (changed.pnlPercent != 0.0 || changed.parsedStatus == SignalStatus.CLOSED) {
+                    changed.pnlPercent
+                } else {
+                    changed.calculatePnlForStatus(changed.parsedStatus)
+                }
+                _snackbarEvents.tryEmit("${changed.symbol} ${changed.parsedStatus.label} (${formatPnlPercent(pnl)})")
             }
         }
     }
@@ -387,6 +421,22 @@ class TradingDeskViewModel(
         viewModelScope.launch {
             prefsStore.setClearedBeforeTimestamp(0L)
             _snackbarEvents.tryEmit("Cleared signals restored")
+        }
+    }
+
+    fun clearLocalHistoryFeed() {
+        viewModelScope.launch {
+            val latestTs = (uiState.value.signals.maxOfOrNull { it.effectiveTimestampMillis() }
+                ?: System.currentTimeMillis())
+            prefsStore.setHistoryClearedBeforeTimestamp(latestTs)
+            _snackbarEvents.tryEmit("Active & History cleared locally — ready for new trades")
+        }
+    }
+
+    fun restoreClearedHistoryFeed() {
+        viewModelScope.launch {
+            prefsStore.setHistoryClearedBeforeTimestamp(0L)
+            _snackbarEvents.tryEmit("Cleared Active & History restored")
         }
     }
 
@@ -448,6 +498,7 @@ class TradingDeskViewModel(
                 demoRepo.resetDemoData()
             }
             prefsStore.setClearedBeforeTimestamp(0L)
+            prefsStore.setHistoryClearedBeforeTimestamp(0L)
             prefsStore.setConnectionMode(ConnectionMode.DEMO)
             _snackbarEvents.tryEmit("Demo Mode active with sample signals")
         }
@@ -456,6 +507,7 @@ class TradingDeskViewModel(
     fun connectBuiltInCloud() {
         viewModelScope.launch {
             prefsStore.setClearedBeforeTimestamp(0L)
+            prefsStore.setHistoryClearedBeforeTimestamp(0L)
             prefsStore.setConnectionMode(ConnectionMode.BUILT_IN_FIRESTORE)
             _snackbarEvents.tryEmit("Switched to Built-in Cloud Firestore")
         }
@@ -473,6 +525,7 @@ class TradingDeskViewModel(
                 ConnectionMode.CUSTOM_FIRESTORE
             }
             prefsStore.setClearedBeforeTimestamp(0L)
+            prefsStore.setHistoryClearedBeforeTimestamp(0L)
             prefsStore.saveCustomConfig(config, targetMode)
             _snackbarEvents.tryEmit(
                 if (targetMode == ConnectionMode.CUSTOM_RTDB) {

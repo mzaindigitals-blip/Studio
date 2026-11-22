@@ -142,4 +142,39 @@ class SignalDeskUnitTest {
         assertTrue(res.isSuccess)
         assertEquals("https://my-bot-rtdb.firebaseio.com", res.getOrThrow().databaseURL)
     }
+
+    @Test
+    fun signalCardImageGenerator_rendersOrderAndResultBitmaps() {
+        val palette = com.example.ui.theme.paletteForTheme(com.example.ui.theme.DeskThemeId.OBSIDIAN_GOLD)
+        val signal = TradingSignal(
+            id = "sig_test",
+            symbol = "XAUUSD",
+            timeframe = "M15",
+            side = SignalSide.BUY.name,
+            strategy = "3-Module PA",
+            entry = 2642.50,
+            sl = 2635.00,
+            tp1 = 2652.50,
+            tp2 = 2662.50,
+            rr = "1:2.6",
+            status = SignalStatus.TP2_HIT.name,
+            pnlPercent = 2.67
+        )
+
+        val orderBitmap = com.example.util.SignalCardImageGenerator.renderSignalCardBitmap(
+            signal = signal,
+            cardType = com.example.util.ShareCardType.ORDER_ENTRY,
+            palette = palette
+        )
+        assertEquals(1080, orderBitmap.width)
+        assertEquals(1350, orderBitmap.height)
+
+        val resultBitmap = com.example.util.SignalCardImageGenerator.renderSignalCardBitmap(
+            signal = signal,
+            cardType = com.example.util.ShareCardType.RESULT_HIT,
+            palette = palette
+        )
+        assertEquals(1080, resultBitmap.width)
+        assertEquals(1350, resultBitmap.height)
+    }
 }

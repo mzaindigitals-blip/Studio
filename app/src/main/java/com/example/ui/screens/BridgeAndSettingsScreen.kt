@@ -105,7 +105,15 @@ def push_signal(symbol, timeframe, side, strategy, entry, sl, tp1, tp2, rr):
     }
     res = requests.post(f"{DATABASE_URL}/signals.json", json=payload, timeout=10)
     res.raise_for_status()
-    return res.json()["name"]"""
+    return res.json()["name"]
+
+def update_signal_status(signal_key, new_status, pnl_percent=None):
+    # new_status: "TP1_HIT", "TP2_HIT", "SL_HIT", "CLOSED"
+    patch_data = {"status": new_status}
+    if pnl_percent is not None:
+        patch_data["pnlPercent"] = float(pnl_percent)
+    res = requests.patch(f"{DATABASE_URL}/signals/{signal_key}.json", json=patch_data, timeout=10)
+    res.raise_for_status()"""
 }
 
 @Composable

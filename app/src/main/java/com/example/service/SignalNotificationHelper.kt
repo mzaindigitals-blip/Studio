@@ -16,7 +16,9 @@ import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.model.SignalSide
+import com.example.model.SignalStatus
 import com.example.model.TradingSignal
+import com.example.model.formatPnlPercent
 import com.example.model.formatPrice
 
 object SignalNotificationHelper {
@@ -43,7 +45,7 @@ object SignalNotificationHelper {
             "Trading Signal Alerts",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "High-priority alerts when a new BUY or SELL signal arrives."
+            description = "High-priority alerts when a new BUY/SELL signal or TP/SL hit arrives."
             enableVibration(true)
             vibrationPattern = longArrayOf(0L, 180L, 80L, 220L)
             setSound(
@@ -71,13 +73,7 @@ object SignalNotificationHelper {
             .build()
 
     fun showNewSignalNotification(context: Context, signal: TradingSignal) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) return
-        }
+        if (!hasNotificationPermission(context)) return
 
         ensureChannels(context)
         val isBuy = signal.parsedSide == SignalSide.BUY
@@ -101,6 +97,53 @@ object SignalNotificationHelper {
 
         val notifId = (signal.id.hashCode() and 0x7FFFFFFF).coerceAtLeast(2000)
         NotificationManagerCompat.from(context).notify(notifId, notif)
+    }
+
+    fun showStatusUpdateNotification(
+        context: Context,
+        signal: TradingSignal,
+        newStatus: SignalStatus
+    ) {
+        if (!hasNotificationPermission(context)) return
+
+        ensureChannels(context)
+        val sideBadge = if (signal.parsedSide == SignalSide.BUY) "BUY" else "SELL"
+        val effectivePnl = if (signal.pnlPercent != 0.0 || newStatus == SignalStatus.CLOSED) {
+            signal.pnlPercent
+        } else {
+            signal.calculatePnlForStatus(newStatus)
+        }
+        val title = when (newStatus) {
+            SignalStatus.TP1_HIT -> "TP1 HIT · ${signal.symbol} ($sideBadge)"
+            SignalStatus.TP2_HIT -> "TP2 HIT · ${signal.symbol} ($sideBadge)"
+            SignalStatus.SL_HIT -> "SL HIT · ${signal.symbol} ($sideBadge)"
+            SignalStatus.CLOSED -> "CLOSED · ${signal.symbol} ($sideBadge)"
+            SignalStatus.ACTIVE -> "ACTIVE · ${signal.symbol} ($sideBadge)"
+        }
+        val body = "Result: ${formatPnlPercent(effectivePnl)} | Entry ${formatPrice(signal.entry, signal.symbol)} | ${signal.strategy}"
+
+        val notif = NotificationCompat.Builder(context, CHANNEL_SIGNALS)
+            .setSmallIcon(R.mipmap.ic_launcher_round)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setContentIntent(createLaunchIntent(context))
+            .build()
+
+        val notifId = (("${signal.id}_${newStatus.name}").hashCode() and 0x7FFFFFFF).coerceAtLeast(3000)
+        NotificationManagerCompat.from(context).notify(notifId, notif)
+    }
+
+    private fun hasNotificationPermission(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun createLaunchIntent(context: Context): PendingIntent {

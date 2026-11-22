@@ -18,17 +18,22 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -58,16 +63,19 @@ fun ActiveHistoryScreen(
     onSelectHistoryRange: (HistoryRange) -> Unit,
     onUpdateStatus: (TradingSignal, SignalStatus) -> Unit,
     onDismissNew: (String) -> Unit,
+    onClearLocalHistoryFeed: () -> Unit = {},
+    onRestoreClearedHistoryFeed: () -> Unit = {},
+    onShareCard: (TradingSignal) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = TerminalTheme.colors
 
-    val openTrades = remember(uiState.signals) {
-        uiState.signals.filter { it.parsedStatus.isOpen }
+    val openTrades = remember(uiState.visibleHistorySignals) {
+        uiState.visibleHistorySignals.filter { it.parsedStatus.isOpen }
     }
 
-    val closedTradesAll = remember(uiState.signals) {
-        uiState.signals.filter { it.parsedStatus.isClosed }
+    val closedTradesAll = remember(uiState.visibleHistorySignals) {
+        uiState.visibleHistorySignals.filter { it.parsedStatus.isClosed }
     }
 
     val filteredClosedTrades = remember(closedTradesAll, uiState.historyRange) {
@@ -87,54 +95,101 @@ fun ActiveHistoryScreen(
     val showAdminCardActions = uiState.isAdminUnlocked || uiState.connectionMode == ConnectionMode.DEMO
 
     Column(modifier = modifier.fillMaxSize()) {
-        SingleChoiceSegmentedButtonRow(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            SegmentedButton(
-                selected = uiState.activeHistorySegment == 0,
-                onClick = { onSelectSegment(0) },
-                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = colors.emeraldContainer,
-                    activeContentColor = colors.emeraldBuy,
-                    inactiveContainerColor = colors.surface,
-                    inactiveContentColor = colors.textSecondary
-                ),
-                modifier = Modifier.testTag("segment_active_trades")
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Active (${openTrades.size})")
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.weight(1f)) {
+                SegmentedButton(
+                    selected = uiState.activeHistorySegment == 0,
+                    onClick = { onSelectSegment(0) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = colors.emeraldContainer,
+                        activeContentColor = colors.emeraldBuy,
+                        inactiveContainerColor = colors.surface,
+                        inactiveContentColor = colors.textSecondary
+                    ),
+                    modifier = Modifier.testTag("segment_active_trades")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Active (${openTrades.size})", maxLines = 1)
+                    }
+                }
+
+                SegmentedButton(
+                    selected = uiState.activeHistorySegment == 1,
+                    onClick = { onSelectSegment(1) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = colors.goldContainer,
+                        activeContentColor = colors.goldAccent,
+                        inactiveContainerColor = colors.surface,
+                        inactiveContentColor = colors.textSecondary
+                    ),
+                    modifier = Modifier.testTag("segment_closed_history")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.History,
+                            contentDescription = null,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("History (${closedTradesAll.size})", maxLines = 1)
+                    }
                 }
             }
 
-            SegmentedButton(
-                selected = uiState.activeHistorySegment == 1,
-                onClick = { onSelectSegment(1) },
-                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                colors = SegmentedButtonDefaults.colors(
-                    activeContainerColor = colors.goldContainer,
-                    activeContentColor = colors.goldAccent,
-                    inactiveContainerColor = colors.surface,
-                    inactiveContentColor = colors.textSecondary
-                ),
-                modifier = Modifier.testTag("segment_closed_history")
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            if (uiState.visibleHistorySignals.isNotEmpty()) {
+                OutlinedButton(
+                    onClick = onClearLocalHistoryFeed,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, colors.border),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.textSecondary),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                    modifier = Modifier
+                        .height(36.dp)
+                        .testTag("clear_history_feed_button")
+                ) {
                     Icon(
-                        imageVector = Icons.Rounded.History,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
+                        imageVector = Icons.Rounded.CleaningServices,
+                        contentDescription = "Clear Active & History",
+                        tint = colors.goldAccent,
+                        modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("History (${closedTradesAll.size})")
+                    Text("Clear", style = MaterialTheme.typography.labelMedium)
+                }
+            } else if (uiState.clearedHistoryCount > 0) {
+                TextButton(
+                    onClick = onRestoreClearedHistoryFeed,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier
+                        .height(36.dp)
+                        .testTag("restore_cleared_history_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Restore,
+                        contentDescription = "Restore cleared Active & History",
+                        tint = colors.emeraldBuy,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Restore (${uiState.clearedHistoryCount})",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.emeraldBuy
+                    )
                 }
             }
         }
@@ -215,10 +270,13 @@ fun ActiveHistoryScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = if (uiState.activeHistorySegment == 0) {
-                                    "No open trades right now"
-                                } else {
-                                    "No closed trades for ${uiState.historyRange.label}"
+                                text = when {
+                                    uiState.clearedHistoryCount > 0 && uiState.visibleHistorySignals.isEmpty() ->
+                                        "Active & History cleared locally"
+                                    uiState.activeHistorySegment == 0 ->
+                                        "No open trades right now"
+                                    else ->
+                                        "No closed trades for ${uiState.historyRange.label}"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
                                 color = colors.textPrimary,
@@ -226,15 +284,34 @@ fun ActiveHistoryScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = if (uiState.activeHistorySegment == 0) {
-                                    "Active and TP1_HIT positions appear here automatically."
-                                } else {
-                                    "Completed TP2, SL, and closed signals will be logged here."
+                                text = when {
+                                    uiState.clearedHistoryCount > 0 && uiState.visibleHistorySignals.isEmpty() ->
+                                        "New trades and TP/SL updates will appear here automatically."
+                                    uiState.activeHistorySegment == 0 ->
+                                        "Active and TP1_HIT positions appear here automatically."
+                                    else ->
+                                        "Completed TP2, SL, and closed signals will be logged here."
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = colors.textSecondary,
                                 textAlign = TextAlign.Center
                             )
+                            if (uiState.clearedHistoryCount > 0) {
+                                Spacer(modifier = Modifier.height(14.dp))
+                                OutlinedButton(
+                                    onClick = onRestoreClearedHistoryFeed,
+                                    border = BorderStroke(1.dp, colors.emeraldBuy.copy(alpha = 0.6f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.emeraldBuy)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Restore,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Restore ${uiState.clearedHistoryCount} Cleared Trades")
+                                }
+                            }
                         }
                     }
                 }
@@ -249,7 +326,8 @@ fun ActiveHistoryScreen(
                         isUpdating = signal.id in uiState.updatingSignalIds,
                         showAdminActions = showAdminCardActions,
                         onUpdateStatus = { newStatus -> onUpdateStatus(signal, newStatus) },
-                        onDismissNew = { onDismissNew(signal.id) }
+                        onDismissNew = { onDismissNew(signal.id) },
+                        onShareCard = { onShareCard(signal) }
                     )
                 }
             }
