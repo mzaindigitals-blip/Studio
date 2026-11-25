@@ -79,9 +79,11 @@ object SignalNotificationHelper {
         val isBuy = signal.parsedSide == SignalSide.BUY
         val sideBadge = if (isBuy) "BUY" else "SELL"
         val title = "$sideBadge ${signal.symbol} (${signal.timeframe}) · ${signal.strategy}"
+        val tp3Text = if (signal.tp3 > 0.0) " | TP3 ${formatPrice(signal.tp3, signal.symbol)}" else ""
         val body = "Entry ${formatPrice(signal.entry, signal.symbol)} | " +
             "SL ${formatPrice(signal.sl, signal.symbol)} | " +
-            "TP1 ${formatPrice(signal.tp1, signal.symbol)} | R:R ${signal.rr}"
+            "TP1 ${formatPrice(signal.tp1, signal.symbol)} | " +
+            "TP2 ${formatPrice(signal.tp2, signal.symbol)}$tp3Text | R:R ${signal.rr}"
 
         val notif = NotificationCompat.Builder(context, CHANNEL_SIGNALS)
             .setSmallIcon(R.mipmap.ic_launcher_round)

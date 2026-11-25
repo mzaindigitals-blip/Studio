@@ -13,10 +13,15 @@ import com.example.data.SoundAlertPlayer
 import com.example.model.ConnectionMode
 import com.example.model.ConnectionStatus
 import com.example.model.CustomFirebaseConfig
+import com.example.model.DeskConfig
+import com.example.model.HistoryDayBucket
+import com.example.model.MemberAccessStatus
 import com.example.model.SignalStatus
+import com.example.model.TeamMember
 import com.example.model.TradeStats
 import com.example.model.TradingSignal
 import com.example.model.calculateTradeStats
+import com.example.model.classifyDayBucket
 import com.example.model.formatPnlPercent
 import com.example.ui.theme.DeskThemeId
 import com.example.util.ShareCardType
@@ -69,15 +74,26 @@ data class TradingDeskUiState(
     val clearedBeforeTimestamp: Long = 0L,
     val historyClearedBeforeTimestamp: Long = 0L,
     val isAdminUnlocked: Boolean = false,
+    val isOwnerDevice: Boolean = false,
     val adminPin: String = "2026",
     val backgroundAlertsEnabled: Boolean = false,
-    val autoTrackTpSlEnabled: Boolean = true,
-    val autoSaveCardImages: Boolean = true,
+    val autoTrackTpSlEnabled: Boolean = false,
+    val autoSaveCardImages: Boolean = false,
     val showManualStatusButtons: Boolean = false,
+    val liveTodayOnly: Boolean = true,
+    val mutedPairs: Set<String> = emptySet(),
+    val deviceId: String = "",
+    val memberName: String = "Trader",
+    val memberAccessStatus: MemberAccessStatus = MemberAccessStatus.ACTIVE,
+    val deskConfig: DeskConfig = DeskConfig(),
+    val teamMembers: List<TeamMember> = emptyList(),
+    val isLoadingMembers: Boolean = false,
+    val isProcessingCleanup: Boolean = false,
     val livePrices: Map<String, Double> = emptyMap(),
     val signalsState: SignalsStreamState = SignalsStreamState.Loading,
     val signals: List<TradingSignal> = emptyList(),
     val visibleLiveSignals: List<TradingSignal> = emptyList(),
+    val hiddenOlderLiveCount: Int = 0,
     val clearedSignalsCount: Int = 0,
     val visibleHistorySignals: List<TradingSignal> = emptyList(),
     val clearedHistoryCount: Int = 0,
@@ -85,6 +101,7 @@ data class TradingDeskUiState(
     val highlightedNewIds: Set<String> = emptySet(),
     val sideFilter: SideFilter = SideFilter.ALL,
     val symbolFilter: String = "ALL",
+    val historySymbolFilter: String = "ALL",
     val historyRange: HistoryRange = HistoryRange.TODAY,
     val activeHistorySegment: Int = 0,
     val statusError: String? = null,
@@ -111,6 +128,7 @@ class TradingDeskViewModel(
     private val _highlightedNewIds = MutableStateFlow<Set<String>>(emptySet())
     private val _sideFilter = MutableStateFlow(SideFilter.ALL)
     private val _symbolFilter = MutableStateFlow("ALL")
+    private val _historySymbolFilter = MutableStateFlow("ALL")
     private val _historyRange = MutableStateFlow(HistoryRange.TODAY)
     private val _activeHistorySegment = MutableStateFlow(0)
     private val _isSendingTestSignal = MutableStateFlow(false)
@@ -118,6 +136,11 @@ class TradingDeskViewModel(
     private val _isAdminUnlocked = MutableStateFlow(false)
     private val _updatingSignalIds = MutableStateFlow<Set<String>>(emptySet())
     private val _livePrices = MutableStateFlow<Map<String, Double>>(emptyMap())
+    private val _memberAccessStatus = MutableStateFlow(MemberAccessStatus.ACTIVE)
+    private val _deskConfig = MutableStateFlow(DeskConfig())
+    private val _teamMembers = MutableStateFlow<List<TeamMember>>(emptyList())
+    private val _isLoadingMembers = MutableStateFlow(false)
+    private val _isProcessingCleanup = MutableStateFlow(false)
 
     private val _snackbarEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snackbarEvents = _snackbarEvents.asSharedFlow()
@@ -131,6 +154,10 @@ class TradingDeskViewModel(
     private var currentPrefsSnapshot = PersistedDeskPreferences()
 
     init {
+        viewModelScope.launch {
+            prefsStore.ensureDeviceId()
+        }
+        startTeamSyncLoop()
         startMarketPriceWatcher()
     }
 
@@ -146,6 +173,9 @@ class TradingDeskViewModel(
                 _livePrices.value = emptyMap()
                 initialEmissionCaptured = false
                 _highlightedNewIds.value = emptySet()
+            }
+            if (prefs.isOwnerDevice && !_isAdminUnlocked.value) {
+                _isAdminUnlocked.value = true
             }
             currentPrefsSnapshot = prefs
         }
@@ -281,10 +311,11 @@ class TradingDeskViewModel(
     private val filtersFlow = combine(
         _sideFilter,
         _symbolFilter,
+        _historySymbolFilter,
         _historyRange,
         _activeHistorySegment
-    ) { side, symbol, range, seg ->
-        FilterBundle(side, symbol, range, seg)
+    ) { side, symbol, histSym, range, seg ->
+        FilterBundle(side, symbol, histSym, range, seg)
     }
 
     private val statusBundleFlow = combine(
@@ -297,12 +328,23 @@ class TradingDeskViewModel(
         StatusBundle(status, err, newIds, sending, clearing)
     }
 
+    private val teamBundleFlow = combine(
+        _memberAccessStatus,
+        _deskConfig,
+        _teamMembers,
+        _isLoadingMembers,
+        _isProcessingCleanup
+    ) { memberStatus, deskCfg, members, loadingMembers, cleaning ->
+        TeamBundle(memberStatus, deskCfg, members, loadingMembers, cleaning)
+    }
+
     private val adminBundleFlow = combine(
         _isAdminUnlocked,
         _updatingSignalIds,
-        _livePrices
-    ) { adminUnlocked, updating, prices ->
-        AdminBundle(adminUnlocked, updating, prices)
+        _livePrices,
+        teamBundleFlow
+    ) { adminUnlocked, updating, prices, teamBundle ->
+        AdminBundle(adminUnlocked, updating, prices, teamBundle)
     }
 
     val uiState: StateFlow<TradingDeskUiState> = combine(
@@ -319,13 +361,33 @@ class TradingDeskViewModel(
         val filters = values[3] as FilterBundle
         val statusBundle = values[4] as StatusBundle
         val adminBundle = values[5] as AdminBundle
+        val teamBundle = adminBundle.teamBundle
 
-        val signalList = (stream as? SignalsStreamState.Success)?.signals.orEmpty()
-        val visibleLive = signalList.filter { it.effectiveTimestampMillis() > prefs.clearedBeforeTimestamp }
-        val clearedCount = (signalList.size - visibleLive.size).coerceAtLeast(0)
+        val effectiveAdminUnlocked = adminBundle.isAdminUnlocked || prefs.isOwnerDevice
+        val effectiveMemberStatus = if (effectiveAdminUnlocked || prefs.connectionMode != ConnectionMode.CUSTOM_RTDB) {
+            MemberAccessStatus.ACTIVE
+        } else {
+            teamBundle.memberAccessStatus
+        }
+        val canReceiveSignals = effectiveAdminUnlocked || effectiveMemberStatus.canReceiveSignals
+
+        val rawSignals = (stream as? SignalsStreamState.Success)?.signals.orEmpty()
+        val signalList = if (canReceiveSignals) rawSignals else emptyList()
+
+        val afterClearLive = signalList.filter { it.effectiveTimestampMillis() > prefs.clearedBeforeTimestamp }
+        val clearedCount = (signalList.size - afterClearLive.size).coerceAtLeast(0)
+
+        val now = System.currentTimeMillis()
+        val visibleLive = if (prefs.liveTodayOnly) {
+            afterClearLive.filter { classifyDayBucket(it.effectiveTimestampMillis(), now) == HistoryDayBucket.TODAY }
+        } else {
+            afterClearLive
+        }
+        val hiddenOlderLive = (afterClearLive.size - visibleLive.size).coerceAtLeast(0)
+
         val visibleHistory = signalList.filter { it.effectiveTimestampMillis() > prefs.historyClearedBeforeTimestamp }
         val clearedHistoryCnt = (signalList.size - visibleHistory.size).coerceAtLeast(0)
-        val computedStats = calculateTradeStats(signalList)
+        val computedStats = calculateTradeStats(signalList, nowMillis = now)
         val effectiveStats = if (signalList.isNotEmpty()) computedStats else (syncedStats ?: computedStats)
 
         TradingDeskUiState(
@@ -336,16 +398,27 @@ class TradingDeskViewModel(
             themeId = prefs.themeId,
             clearedBeforeTimestamp = prefs.clearedBeforeTimestamp,
             historyClearedBeforeTimestamp = prefs.historyClearedBeforeTimestamp,
-            isAdminUnlocked = adminBundle.isAdminUnlocked,
+            isAdminUnlocked = effectiveAdminUnlocked,
+            isOwnerDevice = prefs.isOwnerDevice,
             adminPin = prefs.adminPin,
             backgroundAlertsEnabled = prefs.backgroundAlertsEnabled,
             autoTrackTpSlEnabled = prefs.autoTrackTpSlEnabled,
             autoSaveCardImages = prefs.autoSaveCardImages,
             showManualStatusButtons = prefs.showManualStatusButtons,
+            liveTodayOnly = prefs.liveTodayOnly,
+            mutedPairs = prefs.mutedPairs,
+            deviceId = prefs.deviceId,
+            memberName = prefs.memberName,
+            memberAccessStatus = effectiveMemberStatus,
+            deskConfig = teamBundle.deskConfig,
+            teamMembers = teamBundle.teamMembers,
+            isLoadingMembers = teamBundle.isLoadingMembers,
+            isProcessingCleanup = teamBundle.isProcessingCleanup,
             livePrices = adminBundle.livePrices,
             signalsState = stream,
             signals = signalList,
             visibleLiveSignals = visibleLive,
+            hiddenOlderLiveCount = hiddenOlderLive,
             clearedSignalsCount = clearedCount,
             visibleHistorySignals = visibleHistory,
             clearedHistoryCount = clearedHistoryCnt,
@@ -353,6 +426,7 @@ class TradingDeskViewModel(
             highlightedNewIds = statusBundle.highlightedNewIds,
             sideFilter = filters.sideFilter,
             symbolFilter = filters.symbolFilter,
+            historySymbolFilter = filters.historySymbolFilter,
             historyRange = filters.historyRange,
             activeHistorySegment = filters.activeHistorySegment,
             statusError = statusBundle.statusError,
@@ -367,15 +441,59 @@ class TradingDeskViewModel(
         initialValue = TradingDeskUiState(authenticatedUserId = authenticatedUserId)
     )
 
+    private fun startTeamSyncLoop() {
+        viewModelScope.launch {
+            delay(1_200L)
+            while (isActive) {
+                syncTeamAndDeskNow(silent = true)
+                delay(45_000L)
+            }
+        }
+    }
+
+    private suspend fun syncTeamAndDeskNow(silent: Boolean) {
+        val prefs = currentPrefsSnapshot
+        if (prefs.connectionMode != ConnectionMode.CUSTOM_RTDB || !prefs.customConfig.hasDatabaseUrl) {
+            _memberAccessStatus.value = MemberAccessStatus.ACTIVE
+            return
+        }
+        val devId = prefs.deviceId.ifBlank { prefsStore.ensureDeviceId() }
+        val isOwner = prefs.isOwnerDevice || _isAdminUnlocked.value
+        customRepo.syncMemberAndDeskConfig(
+            databaseUrl = prefs.customConfig.databaseURL,
+            deviceId = devId,
+            memberName = prefs.memberName,
+            isOwnerDevice = isOwner
+        ).onSuccess { (status, config) ->
+            _memberAccessStatus.value = status
+            _deskConfig.value = config
+            prefsStore.setCachedMemberStatus(status)
+        }.onFailure { err ->
+            if (!silent) {
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Sync failed")
+            }
+        }
+        if (isOwner) {
+            customRepo.fetchAllTeamMembers(prefs.customConfig.databaseURL).onSuccess { list ->
+                _teamMembers.value = list
+            }
+        }
+    }
+
     private fun startMarketPriceWatcher() {
         viewModelScope.launch {
-            delay(2_000L)
+            delay(3_000L)
             while (isActive) {
                 val prefs = currentPrefsSnapshot
                 val isLiveStream = prefs.connectionMode == ConnectionMode.CUSTOM_RTDB ||
                     prefs.connectionMode == ConnectionMode.CUSTOM_FIRESTORE
-                if (isLiveStream && prefs.autoTrackTpSlEnabled) {
-                    val openSignals = latestSignalsSnapshot.filter { it.parsedStatus.isOpen }
+                val isOwnerOrAdmin = prefs.isOwnerDevice || _isAdminUnlocked.value
+                if (isLiveStream && prefs.autoTrackTpSlEnabled && isOwnerOrAdmin) {
+                    val now = System.currentTimeMillis()
+                    val cutoff = now - 36L * 3600_000L
+                    val openSignals = latestSignalsSnapshot.filter {
+                        it.parsedStatus.isOpen && it.effectiveTimestampMillis() >= cutoff
+                    }
                     if (openSignals.isNotEmpty()) {
                         val symbols = openSignals.map { it.symbol.uppercase(Locale.US) }.toSet()
                         val fetchedPrices = runCatching { marketPriceMonitor.fetchLivePrices(symbols) }
@@ -394,7 +512,7 @@ class TradingDeskViewModel(
                         }
                     }
                 }
-                delay(20_000L)
+                delay(25_000L)
             }
         }
     }
@@ -407,6 +525,15 @@ class TradingDeskViewModel(
             return
         }
 
+        val prefs = currentPrefsSnapshot
+        val canReceive = prefs.isOwnerDevice || _isAdminUnlocked.value || _memberAccessStatus.value.canReceiveSignals
+        if (!canReceive) {
+            validSignals.forEach { knownSignalStatuses[it.id] = it.parsedStatus }
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val maxAgeMs = 24L * 3600_000L
         val newlyArrivedIds = mutableSetOf<String>()
         val statusChanged = mutableListOf<TradingSignal>()
         val newlyArrivedSignals = mutableListOf<TradingSignal>()
@@ -414,21 +541,27 @@ class TradingDeskViewModel(
         validSignals.forEach { sig ->
             val prevStatus = knownSignalStatuses[sig.id]
             val currentStatus = sig.parsedStatus
+            val symUpper = sig.symbol.trim().uppercase(Locale.US)
+            val isAllowedPair = symUpper !in prefs.mutedPairs
+            val isFresh = (now - sig.effectiveTimestampMillis()) <= maxAgeMs
+
             if (prevStatus == null) {
                 knownSignalStatuses[sig.id] = currentStatus
-                newlyArrivedIds.add(sig.id)
-                newlyArrivedSignals.add(sig)
+                if (isAllowedPair && isFresh) {
+                    newlyArrivedIds.add(sig.id)
+                    newlyArrivedSignals.add(sig)
+                }
             } else if (prevStatus != currentStatus) {
                 knownSignalStatuses[sig.id] = currentStatus
-                if (currentStatus != SignalStatus.ACTIVE) {
+                if (currentStatus != SignalStatus.ACTIVE && isAllowedPair && isFresh) {
                     newlyArrivedIds.add(sig.id)
                     statusChanged.add(sig)
                 }
             }
         }
 
-        if (currentPrefsSnapshot.autoSaveCardImages) {
-            val activeTheme = currentPrefsSnapshot.themeId
+        if (prefs.autoSaveCardImages) {
+            val activeTheme = prefs.themeId
             newlyArrivedSignals.forEach { arrived ->
                 val cardType = if (arrived.parsedStatus == SignalStatus.ACTIVE) {
                     ShareCardType.ORDER_ENTRY
@@ -480,8 +613,46 @@ class TradingDeskViewModel(
         _historyRange.value = range
     }
 
+    fun setHistorySymbolFilter(symbol: String) {
+        _historySymbolFilter.value = symbol
+    }
+
     fun setActiveHistorySegment(segment: Int) {
         _activeHistorySegment.value = segment
+    }
+
+    fun setLiveTodayOnly(todayOnly: Boolean) {
+        viewModelScope.launch {
+            prefsStore.setLiveTodayOnly(todayOnly)
+        }
+    }
+
+    fun toggleMutedPair(symbol: String) {
+        val clean = symbol.trim().uppercase(Locale.US)
+        if (clean.isBlank()) return
+        viewModelScope.launch {
+            val current = currentPrefsSnapshot.mutedPairs
+            val next = if (clean in current) current - clean else current + clean
+            prefsStore.setMutedPairs(next)
+            _snackbarEvents.tryEmit(
+                if (clean in next) "$clean alerts muted on this phone" else "$clean alerts enabled"
+            )
+        }
+    }
+
+    fun updateMemberName(name: String) {
+        viewModelScope.launch {
+            prefsStore.setMemberName(name)
+            syncTeamAndDeskNow(silent = true)
+            _snackbarEvents.tryEmit("Profile name saved")
+        }
+    }
+
+    fun refreshTeamSync() {
+        viewModelScope.launch {
+            syncTeamAndDeskNow(silent = false)
+            _snackbarEvents.tryEmit("Synced with Digital Vertex server")
+        }
     }
 
     fun setThemeId(themeId: DeskThemeId) {
@@ -527,7 +698,11 @@ class TradingDeskViewModel(
     fun unlockAdmin(enteredPin: String): Boolean {
         return if (enteredPin.trim() == currentPrefsSnapshot.adminPin) {
             _isAdminUnlocked.value = true
-            _snackbarEvents.tryEmit("Admin Mode unlocked — Muhammad Zain")
+            viewModelScope.launch {
+                prefsStore.setIsOwnerDevice(true)
+                syncTeamAndDeskNow(silent = true)
+            }
+            _snackbarEvents.tryEmit("Owner Admin unlocked — Muhammad Zain")
             true
         } else {
             false
@@ -536,7 +711,123 @@ class TradingDeskViewModel(
 
     fun lockAdmin() {
         _isAdminUnlocked.value = false
-        _snackbarEvents.tryEmit("Admin Mode locked (Client View)")
+        viewModelScope.launch {
+            prefsStore.setIsOwnerDevice(false)
+        }
+        _snackbarEvents.tryEmit("Switched to Client View (Admin hidden)")
+    }
+
+    fun refreshTeamMembers() {
+        if (!_isAdminUnlocked.value && !currentPrefsSnapshot.isOwnerDevice) return
+        val dbUrl = currentPrefsSnapshot.customConfig.databaseURL
+        if (dbUrl.isBlank()) return
+        viewModelScope.launch {
+            _isLoadingMembers.value = true
+            customRepo.fetchAllTeamMembers(dbUrl).onSuccess { list ->
+                _teamMembers.value = list
+            }.onFailure { err ->
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Failed to load team list")
+            }
+            _isLoadingMembers.value = false
+        }
+    }
+
+    fun updateTeamMemberStatus(deviceId: String, newStatus: MemberAccessStatus) {
+        if (!_isAdminUnlocked.value && !currentPrefsSnapshot.isOwnerDevice) return
+        val dbUrl = currentPrefsSnapshot.customConfig.databaseURL
+        if (dbUrl.isBlank()) return
+        viewModelScope.launch {
+            customRepo.updateMemberStatus(dbUrl, deviceId, newStatus).onSuccess {
+                _teamMembers.update { list ->
+                    list.map { if (it.deviceId == deviceId) it.copy(status = newStatus.name) else it }
+                }
+                _snackbarEvents.tryEmit("Member set to ${newStatus.label}")
+            }.onFailure { err ->
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Failed to update member")
+            }
+        }
+    }
+
+    fun removeTeamMember(deviceId: String) {
+        if (!_isAdminUnlocked.value && !currentPrefsSnapshot.isOwnerDevice) return
+        val dbUrl = currentPrefsSnapshot.customConfig.databaseURL
+        if (dbUrl.isBlank()) return
+        viewModelScope.launch {
+            customRepo.removeTeamMember(dbUrl, deviceId).onSuccess {
+                _teamMembers.update { list -> list.filterNot { it.deviceId == deviceId } }
+                _snackbarEvents.tryEmit("Member removed from roster")
+            }.onFailure { err ->
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Failed to remove member")
+            }
+        }
+    }
+
+    fun publishDeskAnnouncement(announcement: String) {
+        if (!_isAdminUnlocked.value && !currentPrefsSnapshot.isOwnerDevice) return
+        val dbUrl = currentPrefsSnapshot.customConfig.databaseURL
+        if (dbUrl.isBlank()) return
+        viewModelScope.launch {
+            val next = _deskConfig.value.copy(announcement = announcement.trim())
+            customRepo.updateDeskConfig(dbUrl, next).onSuccess {
+                _deskConfig.value = next
+                _snackbarEvents.tryEmit(
+                    if (next.announcement.isBlank()) "Broadcast notice cleared" else "Notice sent to all active phones"
+                )
+            }.onFailure { err ->
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Failed to update notice")
+            }
+        }
+    }
+
+    fun setRequireMemberApproval(requireApproval: Boolean) {
+        if (!_isAdminUnlocked.value && !currentPrefsSnapshot.isOwnerDevice) return
+        val dbUrl = currentPrefsSnapshot.customConfig.databaseURL
+        if (dbUrl.isBlank()) return
+        viewModelScope.launch {
+            val next = _deskConfig.value.copy(requireApproval = requireApproval)
+            customRepo.updateDeskConfig(dbUrl, next).onSuccess {
+                _deskConfig.value = next
+                _snackbarEvents.tryEmit(
+                    if (requireApproval) "New members now wait for your Approval" else "Auto-join enabled for Team Code"
+                )
+            }.onFailure { err ->
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Failed to update approval mode")
+            }
+        }
+    }
+
+    fun closeStaleOpenSignals() {
+        if (!_isAdminUnlocked.value && !currentPrefsSnapshot.isOwnerDevice) return
+        val dbUrl = currentPrefsSnapshot.customConfig.databaseURL
+        if (dbUrl.isBlank()) return
+        viewModelScope.launch {
+            _isProcessingCleanup.value = true
+            customRepo.closeStaleOpenSignals(dbUrl, latestSignalsSnapshot).onSuccess { closedCount ->
+                _snackbarEvents.tryEmit(
+                    if (closedCount > 0) "Closed $closedCount old open trades (>24h)" else "No stale open trades found"
+                )
+            }.onFailure { err ->
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Cleanup failed")
+            }
+            _isProcessingCleanup.value = false
+        }
+    }
+
+    fun pruneOldSignals(keepLatest: Int = 35) {
+        if (!_isAdminUnlocked.value && !currentPrefsSnapshot.isOwnerDevice) return
+        val dbUrl = currentPrefsSnapshot.customConfig.databaseURL
+        if (dbUrl.isBlank()) return
+        viewModelScope.launch {
+            _isProcessingCleanup.value = true
+            customRepo.pruneOldSignals(dbUrl, keepLatest).onSuccess { deleted ->
+                _snackbarEvents.tryEmit(
+                    if (deleted > 0) "Pruned $deleted old signals (kept latest $keepLatest for Spark quota)" else "Already lean (<= $keepLatest signals)"
+                )
+            }.onFailure { err ->
+                _snackbarEvents.tryEmit(err.localizedMessage ?: "Prune failed")
+            }
+            _isProcessingCleanup.value = false
+        }
     }
 
     fun updateAdminPin(newPin: String) {
@@ -564,7 +855,7 @@ class TradingDeskViewModel(
         viewModelScope.launch {
             prefsStore.setAutoTrackTpSlEnabled(enabled)
             _snackbarEvents.tryEmit(
-                if (enabled) "Auto TP/SL live price tracker enabled" else "Auto TP/SL tracker paused"
+                if (enabled) "Experimental live price tracker enabled" else "Bot-authoritative TP/SL mode active (Recommended)"
             )
         }
     }
@@ -573,7 +864,7 @@ class TradingDeskViewModel(
         viewModelScope.launch {
             prefsStore.setAutoSaveCardImages(enabled)
             _snackbarEvents.tryEmit(
-                if (enabled) "Auto-save Order & TP cards to Gallery enabled" else "Auto-save card images turned off"
+                if (enabled) "Auto-save PNG cards to Gallery enabled" else "Auto-save turned off (Storage saver)"
             )
         }
     }
@@ -582,7 +873,7 @@ class TradingDeskViewModel(
         viewModelScope.launch {
             prefsStore.setShowManualStatusButtons(show)
             _snackbarEvents.tryEmit(
-                if (show) "Manual TP/SL override buttons shown" else "Manual TP/SL buttons hidden (100% Auto mode)"
+                if (show) "Manual TP/SL override buttons shown" else "Manual TP/SL buttons hidden"
             )
         }
     }
@@ -624,11 +915,14 @@ class TradingDeskViewModel(
         }
     }
 
-    fun saveAndConnectCustomConfig(config: CustomFirebaseConfig) {
+    fun saveAndConnectCustomConfig(config: CustomFirebaseConfig, memberName: String? = null) {
         viewModelScope.launch {
             if (!config.isValid) {
                 _snackbarEvents.tryEmit("Enter a valid Team Code, databaseURL, or firebaseConfig")
                 return@launch
+            }
+            if (!memberName.isNullOrBlank()) {
+                prefsStore.setMemberName(memberName)
             }
             val targetMode = if (config.hasDatabaseUrl) {
                 ConnectionMode.CUSTOM_RTDB
@@ -638,9 +932,11 @@ class TradingDeskViewModel(
             prefsStore.setClearedBeforeTimestamp(0L)
             prefsStore.setHistoryClearedBeforeTimestamp(0L)
             prefsStore.saveCustomConfig(config, targetMode)
+            delay(250L)
+            syncTeamAndDeskNow(silent = true)
             _snackbarEvents.tryEmit(
                 if (targetMode == ConnectionMode.CUSTOM_RTDB) {
-                    "Connected to Digital Vertex Realtime Database"
+                    "Connected to Digital Vertex Live Stream"
                 } else {
                     "Connected to Custom Firestore"
                 }
@@ -766,6 +1062,7 @@ class TradingDeskViewModel(
     private data class FilterBundle(
         val sideFilter: SideFilter,
         val symbolFilter: String,
+        val historySymbolFilter: String,
         val historyRange: HistoryRange,
         val activeHistorySegment: Int
     )
@@ -778,10 +1075,19 @@ class TradingDeskViewModel(
         val isClearingFirebase: Boolean
     )
 
+    private data class TeamBundle(
+        val memberAccessStatus: MemberAccessStatus,
+        val deskConfig: DeskConfig,
+        val teamMembers: List<TeamMember>,
+        val isLoadingMembers: Boolean,
+        val isProcessingCleanup: Boolean
+    )
+
     private data class AdminBundle(
         val isAdminUnlocked: Boolean,
         val updatingSignalIds: Set<String>,
-        val livePrices: Map<String, Double>
+        val livePrices: Map<String, Double>,
+        val teamBundle: TeamBundle
     )
 
     private companion object {

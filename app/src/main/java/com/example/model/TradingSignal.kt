@@ -78,7 +78,9 @@ data class TradingSignal(
     val sl: Double = 0.0,
     val tp1: Double = 0.0,
     val tp2: Double = 0.0,
+    val tp3: Double = 0.0,
     val rr: String = "1:2.0",
+    val lotSize: String = "",
     val status: String = "ACTIVE",
     val timestamp: Long = 0L,
     val pnlPercent: Double = 0.0,
@@ -130,7 +132,9 @@ data class TradingSignal(
             "sl" to sl,
             "tp1" to tp1,
             "tp2" to tp2,
+            "tp3" to tp3.takeIf { it > 0.0 },
             "rr" to rr.trim().ifBlank { "1:2.0" }.take(20),
+            "lotSize" to lotSize.takeIf { it.isNotBlank() }?.take(20),
             "status" to SignalStatus.fromRaw(status).name,
             "timestamp" to effectiveTimestampMillis(),
             "pnlPercent" to pnlPercent,
@@ -153,7 +157,9 @@ data class TradingSignal(
             put("sl", sl)
             put("tp1", tp1)
             put("tp2", tp2)
+            if (tp3 > 0.0) put("tp3", tp3)
             put("rr", rr)
+            if (lotSize.isNotBlank()) put("lotSize", lotSize)
             put("status", SignalStatus.fromRaw(status).name)
             put("timestamp", effectiveTimestampMillis())
             put("pnlPercent", pnlPercent)
@@ -166,11 +172,15 @@ fun Double.roundToTwoDecimals(): Double =
     kotlin.math.round(this * 100.0) / 100.0
 
 fun formatPrice(value: Double, symbol: String): String {
+    if (value == 0.0) return "—"
     val upper = symbol.uppercase(Locale.US)
     val decimals = when {
         upper.contains("JPY") -> 3
-        upper.contains("XAU") || upper.contains("BTC") || upper.contains("ETH") || upper.contains("BNB") -> 2
-        value < 10.0 -> 4
+        upper.contains("XAU") || upper.contains("XAG") -> 2
+        upper.contains("BTC") || upper.contains("ETH") || upper.contains("BNB") || upper.contains("SOL") -> {
+            if (value < 10.0) 4 else 2
+        }
+        value < 20.0 -> 5
         else -> 2
     }
     return String.format(Locale.US, "%.${decimals}f", value)

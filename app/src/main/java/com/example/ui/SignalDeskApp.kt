@@ -66,6 +66,8 @@ import com.example.model.ConnectionMode
 import com.example.model.TradingSignal
 import com.example.service.SignalMonitorService
 import com.example.ui.components.FirebaseSetupModal
+import com.example.ui.components.LotSizeCalculatorBottomSheet
+import com.example.ui.components.OwnerPinUnlockDialog
 import com.example.ui.components.ShareSignalCardDialog
 import com.example.ui.components.TerminalHeaderAndStats
 import com.example.ui.screens.ActiveHistoryScreen
@@ -90,29 +92,35 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class DeskTab(
-    val title: String,
+    val clientTitle: String,
+    val adminTitle: String,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
     val testTag: String
 ) {
     LIVE_SIGNALS(
-        title = "Live Signals",
+        clientTitle = "Live Signals",
+        adminTitle = "Live Signals",
         selectedIcon = Icons.Rounded.CandlestickChart,
         unselectedIcon = Icons.Outlined.CandlestickChart,
         testTag = "nav_tab_live_signals"
     ),
     ACTIVE_HISTORY(
-        title = "Active & History",
+        clientTitle = "Active & History",
+        adminTitle = "Active & History",
         selectedIcon = Icons.Rounded.History,
         unselectedIcon = Icons.Outlined.History,
         testTag = "nav_tab_active_history"
     ),
     DESK_ADMIN(
-        title = "Desk & Admin",
+        clientTitle = "Tools & Desk",
+        adminTitle = "Admin Desk",
         selectedIcon = Icons.Rounded.Tune,
         unselectedIcon = Icons.Outlined.Tune,
         testTag = "nav_tab_bridge_settings"
-    )
+    );
+
+    fun labelFor(isAdmin: Boolean): String = if (isAdmin) adminTitle else clientTitle
 }
 
 @Composable
@@ -194,6 +202,8 @@ private fun SignalDeskScaffold(
     val context = LocalContext.current
     var currentTab by remember { mutableStateOf(DeskTab.LIVE_SIGNALS) }
     var showFirebaseModal by remember { mutableStateOf(false) }
+    var showOwnerPinDialog by remember { mutableStateOf(false) }
+    var showRiskCalculatorSheet by remember { mutableStateOf(false) }
     var shareCardSignal by remember { mutableStateOf<TradingSignal?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -272,18 +282,19 @@ private fun SignalDeskScaffold(
                     ) {
                         DeskTab.entries.forEach { tab ->
                             val selected = currentTab == tab
+                            val label = tab.labelFor(uiState.isAdminUnlocked)
                             NavigationBarItem(
                                 selected = selected,
                                 onClick = { currentTab = tab },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                        contentDescription = tab.title
+                                        contentDescription = label
                                     )
                                 },
                                 label = {
                                     Text(
-                                        text = tab.title,
+                                        text = label,
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 },
@@ -316,18 +327,19 @@ private fun SignalDeskScaffold(
                     ) {
                         DeskTab.entries.forEach { tab ->
                             val selected = currentTab == tab
+                            val label = tab.labelFor(uiState.isAdminUnlocked)
                             NavigationRailItem(
                                 selected = selected,
                                 onClick = { currentTab = tab },
                                 icon = {
                                     Icon(
                                         imageVector = if (selected) tab.selectedIcon else tab.unselectedIcon,
-                                        contentDescription = tab.title
+                                        contentDescription = label
                                     )
                                 },
                                 label = {
                                     Text(
-                                        text = tab.title,
+                                        text = label,
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 },
@@ -353,7 +365,14 @@ private fun SignalDeskScaffold(
                         stats = uiState.stats,
                         onOpenConnectionModal = { showFirebaseModal = true },
                         onToggleMute = { viewModel.toggleSoundMute() },
-                        onToggleBackgroundAlerts = handleToggleBackgroundAlerts
+                        onToggleBackgroundAlerts = handleToggleBackgroundAlerts,
+                        onTriggerOwnerUnlock = {
+                            if (uiState.isAdminUnlocked) {
+                                currentTab = DeskTab.DESK_ADMIN
+                            } else {
+                                showOwnerPinDialog = true
+                            }
+                        }
                     )
 
                     val saveCardDirectly: (TradingSignal, ShareCardType) -> Unit = { sig, cardType ->
@@ -381,6 +400,12 @@ private fun SignalDeskScaffold(
                         }
                     }
 
+                    val copyPriceSnackbar: (String, String) -> Unit = { label, value ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar("Copied $label: $value")
+                        }
+                    }
+
                     Box(modifier = Modifier.weight(1f)) {
                         when (currentTab) {
                             DeskTab.LIVE_SIGNALS -> {
@@ -388,14 +413,18 @@ private fun SignalDeskScaffold(
                                     uiState = uiState,
                                     onSelectSideFilter = viewModel::setSideFilter,
                                     onSelectSymbolFilter = viewModel::setSymbolFilter,
+                                    onSetLiveTodayOnly = viewModel::setLiveTodayOnly,
                                     onUpdateStatus = viewModel::updateSignalStatus,
                                     onDismissNew = viewModel::dismissNewBadge,
                                     onClearLocalFeed = viewModel::clearLocalFeed,
                                     onRestoreClearedFeed = viewModel::restoreClearedFeed,
                                     onOpenFirebaseSetup = { showFirebaseModal = true },
                                     onLoadDemoMode = { viewModel.loadDemoMode(resetData = true) },
+                                    onOpenRiskCalculator = { showRiskCalculatorSheet = true },
+                                    onRefreshTeamSync = viewModel::refreshTeamSync,
                                     onSaveCard = saveCardDirectly,
-                                    onShareCard = { shareCardSignal = it }
+                                    onShareCard = { shareCardSignal = it },
+                                    onCopyPrice = copyPriceSnackbar
                                 )
                             }
                             DeskTab.ACTIVE_HISTORY -> {
@@ -403,12 +432,15 @@ private fun SignalDeskScaffold(
                                     uiState = uiState,
                                     onSelectSegment = viewModel::setActiveHistorySegment,
                                     onSelectHistoryRange = viewModel::setHistoryRange,
+                                    onSelectHistorySymbolFilter = viewModel::setHistorySymbolFilter,
                                     onUpdateStatus = viewModel::updateSignalStatus,
                                     onDismissNew = viewModel::dismissNewBadge,
                                     onClearLocalHistoryFeed = viewModel::clearLocalHistoryFeed,
                                     onRestoreClearedHistoryFeed = viewModel::restoreClearedHistoryFeed,
+                                    onRefreshTeamSync = viewModel::refreshTeamSync,
                                     onSaveCard = saveCardDirectly,
-                                    onShareCard = { shareCardSignal = it }
+                                    onShareCard = { shareCardSignal = it },
+                                    onCopyPrice = copyPriceSnackbar
                                 )
                             }
                             DeskTab.DESK_ADMIN -> {
@@ -420,11 +452,20 @@ private fun SignalDeskScaffold(
                                     onToggleBackgroundAlerts = handleToggleBackgroundAlerts,
                                     onRestoreClearedFeed = viewModel::restoreClearedFeed,
                                     onSelectTheme = viewModel::setThemeId,
-                                    onUnlockAdmin = viewModel::unlockAdmin,
+                                    onUpdateMemberName = viewModel::updateMemberName,
+                                    onRefreshTeamSync = viewModel::refreshTeamSync,
+                                    onToggleMutedPair = viewModel::toggleMutedPair,
                                     onLockAdmin = viewModel::lockAdmin,
                                     onUpdateAdminPin = viewModel::updateAdminPin,
                                     onSendAdminDiagnostic = viewModel::sendAdminDiagnosticSignal,
                                     onClearAllFirebaseSignals = viewModel::clearAllFirebaseSignals,
+                                    onCloseStaleOpenSignals = viewModel::closeStaleOpenSignals,
+                                    onPruneOldSignals = { viewModel.pruneOldSignals(35) },
+                                    onRefreshTeamMembers = viewModel::refreshTeamMembers,
+                                    onUpdateMemberStatus = viewModel::updateTeamMemberStatus,
+                                    onRemoveTeamMember = viewModel::removeTeamMember,
+                                    onPublishAnnouncement = viewModel::publishDeskAnnouncement,
+                                    onSetRequireMemberApproval = viewModel::setRequireMemberApproval,
                                     onToggleAutoTrackTpSl = viewModel::setAutoTrackTpSlEnabled,
                                     onToggleAutoSaveCards = viewModel::setAutoSaveCardImages,
                                     onToggleShowManualButtons = viewModel::setShowManualStatusButtons,
@@ -448,6 +489,25 @@ private fun SignalDeskScaffold(
             onLoadDemoMode = { viewModel.loadDemoMode(resetData = true) },
             onConnectBuiltInCloud = viewModel::connectBuiltInCloud,
             onSendAdminDiagnostic = viewModel::sendAdminDiagnosticSignal
+        )
+    }
+
+    if (showOwnerPinDialog) {
+        OwnerPinUnlockDialog(
+            onDismiss = { showOwnerPinDialog = false },
+            onUnlockAdmin = { pin ->
+                val unlocked = viewModel.unlockAdmin(pin)
+                if (unlocked) {
+                    currentTab = DeskTab.DESK_ADMIN
+                }
+                unlocked
+            }
+        )
+    }
+
+    if (showRiskCalculatorSheet) {
+        LotSizeCalculatorBottomSheet(
+            onDismiss = { showRiskCalculatorSheet = false }
         )
     }
 

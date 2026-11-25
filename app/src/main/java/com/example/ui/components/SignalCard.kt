@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.TrendingDown
 import androidx.compose.material.icons.automirrored.rounded.TrendingUp
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Share
@@ -47,7 +48,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,6 +69,7 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 @Composable
 fun SignalCard(
@@ -77,16 +81,26 @@ fun SignalCard(
     onDismissNew: () -> Unit,
     themeKey: String = "OBSIDIAN_GOLD",
     livePrice: Double? = null,
+    showLiveReferencePrice: Boolean = false,
     onSaveCard: (ShareCardType) -> Unit = {},
     onShareCard: () -> Unit = {},
+    onCopyPrice: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val colors = TerminalTheme.colors
+    val clipboard = LocalClipboardManager.current
     val side = signal.parsedSide
     val status = signal.parsedStatus
     val isBuy = side == SignalSide.BUY
     val sideAccent = if (isBuy) colors.emeraldBuy else colors.crimsonSell
     val sideContainer = if (isBuy) colors.emeraldContainer else colors.crimsonContainer
+
+    val copyValue: (String, String) -> Unit = { label, formatted ->
+        if (formatted != "—") {
+            clipboard.setText(AnnotatedString(formatted))
+            onCopyPrice(label, formatted)
+        }
+    }
 
     val cardBorderColor by animateColorAsState(
         targetValue = when {
@@ -237,7 +251,7 @@ fun SignalCard(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Strategy, R:R, P&L, Timestamp
+                // Strategy, R:R, Lot, P&L, Timestamp
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -311,47 +325,111 @@ fun SignalCard(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Price Matrix (Entry, SL, TP1, TP2)
+                // Spacious 2-Column Full-Precision Price Matrix (Tap any cell to copy)
+                val entryFormatted = formatPrice(signal.entry, signal.symbol)
+                val slFormatted = formatPrice(signal.sl, signal.symbol)
+                val tp1Formatted = formatPrice(signal.tp1, signal.symbol)
+                val tp2Formatted = formatPrice(signal.tp2, signal.symbol)
+                val tp3Formatted = formatPrice(signal.tp3, signal.symbol)
+
+                val slDelta = formatDistanceLabel(signal.entry, signal.sl, signal.symbol, prefix = "Risk ")
+                val tp1Delta = formatDistanceLabel(signal.entry, signal.tp1, signal.symbol, prefix = "+")
+                val tp2Delta = formatDistanceLabel(signal.entry, signal.tp2, signal.symbol, prefix = "+")
+                val tp3Delta = formatDistanceLabel(signal.entry, signal.tp3, signal.symbol, prefix = "+")
+
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = colors.surfaceElevated,
                     border = BorderStroke(1.dp, colors.borderSubtle),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 9.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        PriceColumn(
-                            label = "ENTRY",
-                            value = formatPrice(signal.entry, signal.symbol),
-                            valueColor = colors.textPrimary,
-                            modifier = Modifier.weight(1f)
-                        )
-                        PriceColumn(
-                            label = "STOP LOSS",
-                            value = formatPrice(signal.sl, signal.symbol),
-                            valueColor = colors.crimsonSell,
-                            modifier = Modifier.weight(1f)
-                        )
-                        PriceColumn(
-                            label = "TP 1",
-                            value = formatPrice(signal.tp1, signal.symbol),
-                            valueColor = colors.emeraldBuyDim,
-                            modifier = Modifier.weight(1f)
-                        )
-                        PriceColumn(
-                            label = "TP 2",
-                            value = formatPrice(signal.tp2, signal.symbol),
-                            valueColor = colors.emeraldBuy,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FullPrecisionPriceCell(
+                                label = "ENTRY",
+                                value = entryFormatted,
+                                delta = if (signal.lotSize.isNotBlank()) "Lot: ${signal.lotSize}" else "Tap to copy",
+                                valueColor = colors.textPrimary,
+                                accentBg = colors.surface,
+                                onClick = { copyValue("Entry", entryFormatted) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FullPrecisionPriceCell(
+                                label = "STOP LOSS",
+                                value = slFormatted,
+                                delta = slDelta,
+                                valueColor = colors.crimsonSell,
+                                accentBg = colors.crimsonContainer.copy(alpha = 0.25f),
+                                onClick = { copyValue("SL", slFormatted) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FullPrecisionPriceCell(
+                                label = "TP 1",
+                                value = tp1Formatted,
+                                delta = tp1Delta,
+                                valueColor = colors.emeraldBuyDim,
+                                accentBg = colors.emeraldContainer.copy(alpha = 0.22f),
+                                onClick = { copyValue("TP1", tp1Formatted) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FullPrecisionPriceCell(
+                                label = "TP 2",
+                                value = tp2Formatted,
+                                delta = tp2Delta,
+                                valueColor = colors.emeraldBuy,
+                                accentBg = colors.emeraldContainer.copy(alpha = 0.32f),
+                                onClick = { copyValue("TP2", tp2Formatted) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        if (signal.tp3 > 0.0 || signal.lotSize.isNotBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (signal.tp3 > 0.0) {
+                                    FullPrecisionPriceCell(
+                                        label = "TP 3 (EXT)",
+                                        value = tp3Formatted,
+                                        delta = tp3Delta,
+                                        valueColor = colors.goldAccent,
+                                        accentBg = colors.goldContainer.copy(alpha = 0.35f),
+                                        onClick = { copyValue("TP3", tp3Formatted) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                if (signal.lotSize.isNotBlank()) {
+                                    FullPrecisionPriceCell(
+                                        label = "BOT LOT SIZE",
+                                        value = signal.lotSize,
+                                        delta = "R:R ${signal.rr}",
+                                        valueColor = colors.cyanInfo,
+                                        accentBg = colors.cyanContainer.copy(alpha = 0.25f),
+                                        onClick = { copyValue("Lot Size", signal.lotSize) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
-                if (status.isOpen && livePrice != null && livePrice > 0.0) {
+                if (showLiveReferencePrice && status.isOpen && livePrice != null && livePrice > 0.0) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Surface(
                         shape = RoundedCornerShape(8.dp),
@@ -377,7 +455,7 @@ fun SignalCard(
                                         .background(colors.emeraldBuy)
                                 )
                                 Text(
-                                    text = "AUTO TP/SL LIVE",
+                                    text = "LIVE REFERENCE TRACKER",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 10.sp
@@ -410,7 +488,7 @@ fun SignalCard(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Auto-Generated Order / TP Result Card Image Strip (100% Free Client-Side PNG)
+                // Auto-Generated Order / TP Result Card Image Strip (In-Memory Preview, Save only on button tap)
                 val autoCardType = if (status == SignalStatus.ACTIVE) {
                     ShareCardType.ORDER_ENTRY
                 } else {
@@ -497,7 +575,7 @@ fun SignalCard(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "Tap image to preview · Save or Share to group",
+                                text = "Preview in memory · Tap Save PNG only when needed",
                                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
                                 color = colors.textMuted,
                                 maxLines = 2,
@@ -647,31 +725,86 @@ fun SignalCard(
 }
 
 @Composable
-private fun PriceColumn(
+private fun FullPrecisionPriceCell(
     label: String,
     value: String,
+    delta: String,
     valueColor: Color,
+    accentBg: Color,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val colors = TerminalTheme.colors
-    Column(modifier = modifier) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
-            color = colors.textMuted,
-            maxLines = 1
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = value,
-            style = TabularMonoStyle.copy(
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = valueColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = accentBg,
+        border = BorderStroke(1.dp, colors.borderSubtle),
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 9.dp, vertical = 7.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = colors.textMuted,
+                    maxLines = 1
+                )
+                Icon(
+                    imageVector = Icons.Rounded.ContentCopy,
+                    contentDescription = "Copy $label",
+                    tint = colors.textMuted.copy(alpha = 0.7f),
+                    modifier = Modifier.size(11.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = value,
+                style = TabularMonoStyle.copy(
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = valueColor,
+                maxLines = 1,
+                softWrap = false
+            )
+            if (delta.isNotBlank()) {
+                Text(
+                    text = delta,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private fun formatDistanceLabel(entry: Double, target: Double, symbol: String, prefix: String): String {
+    if (entry <= 0.0 || target <= 0.0) return ""
+    val diff = abs(target - entry)
+    val upper = symbol.uppercase(Locale.US)
+    return when {
+        upper.contains("JPY") -> String.format(Locale.US, "%s%.1f pips", prefix, diff / 0.01)
+        upper.contains("XAU") || upper.contains("XAG") -> String.format(Locale.US, "%s%.2f pts", prefix, diff)
+        upper.contains("BTC") || upper.contains("ETH") || upper.contains("BNB") || upper.contains("SOL") ->
+            if (entry >= 100.0) String.format(Locale.US, "%s%.2f", prefix, diff)
+            else String.format(Locale.US, "%s%.4f", prefix, diff)
+        entry < 20.0 -> String.format(Locale.US, "%s%.1f pips", prefix, diff / 0.0001)
+        else -> String.format(Locale.US, "%s%.2f pts", prefix, diff)
     }
 }
 

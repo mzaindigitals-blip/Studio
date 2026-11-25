@@ -3,8 +3,11 @@ package com.example.data
 import android.content.Context
 import android.util.Log
 import com.example.model.CustomFirebaseConfig
+import com.example.model.DeskConfig
+import com.example.model.MemberAccessStatus
 import com.example.model.SignalSide
 import com.example.model.SignalStatus
+import com.example.model.TeamMember
 import com.example.model.TradeStats
 import com.example.model.TradingSignal
 import com.google.firebase.FirebaseApp
@@ -61,6 +64,7 @@ class CustomFirebaseRepository(private val appContext: Context) {
 
     fun observeRtdbSignals(
         databaseUrl: String,
+        limit: Int = 35,
         onConnected: () -> Unit,
         onDisconnected: (String) -> Unit
     ): Flow<List<TradingSignal>> = flow {
@@ -71,7 +75,7 @@ class CustomFirebaseRepository(private val appContext: Context) {
         while (currentCoroutineContext().isActive) {
             try {
                 val streamUrl = if (useLimitQuery) {
-                    "$baseUrl/signals.json?orderBy=%22%24key%22&limitToLast=50"
+                    "$baseUrl/signals.json?orderBy=%22%24key%22&limitToLast=$limit"
                 } else {
                     "$baseUrl/signals.json"
                 }
@@ -238,6 +242,297 @@ class CustomFirebaseRepository(private val appContext: Context) {
         }
     }
 
+    // --- TEAM MEMBERS & DESK CONFIG (RTDB, LOW-BANDWIDTH SPARK SAFE) ---
+
+    suspend fun syncMemberAndDeskConfig(
+        databaseUrl: String,
+        deviceId: String,
+        memberName: String,
+        isOwnerDevice: Boolean,
+        appVersion: String = "1.0"
+    ): Result<Pair<MemberAccessStatus, DeskConfig>> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = databaseUrl.trim().trimEnd('/')
+            val deskConfig = fetchDeskConfigInternal(baseUrl)
+
+            if (deviceId.isBlank()) {
+                return@withContext Result.success(MemberAccessStatus.ACTIVE to deskConfig)
+            }
+
+            val memberReq = Request.Builder().url("$baseUrl/team_members/$deviceId.json").get().build()
+            val existingObj = restClient.newCall(memberReq).execute().use { res ->
+                if (!res.isSuccessful) {
+                    throw IllegalStateException("Member sync HTTP ${res.code}")
+                }
+                val raw = res.body?.string() ?: "null"
+                if (raw == "null" || raw.isBlank()) null else JSONObject(raw)
+            }
+
+            val now = System.currentTimeMillis()
+            val resolvedStatus: MemberAccessStatus
+            if (existingObj == null) {
+                resolvedStatus = when {
+                    isOwnerDevice -> MemberAccessStatus.ACTIVE
+                    deskConfig.requireApproval -> MemberAccessStatus.PENDING
+                    else -> MemberAccessStatus.ACTIVE
+                }
+                val createPayload = JSONObject().apply {
+                    put("deviceId", deviceId)
+                    put("name", memberName.trim().ifBlank { "Trader" }.take(32))
+                    put("status", resolvedStatus.name)
+                    put("joinedAt", now)
+                    put("lastSeenAt", now)
+                    put("appVersion", appVersion)
+                }.toString()
+                val putReq = Request.Builder()
+                    .url("$baseUrl/team_members/$deviceId.json")
+                    .put(createPayload.toRequestBody(jsonMediaType))
+                    .build()
+                restClient.newCall(putReq).execute().close()
+            } else {
+                val remoteStatus = MemberAccessStatus.fromRaw(existingObj.optString("status", "ACTIVE"))
+                resolvedStatus = if (isOwnerDevice) MemberAccessStatus.ACTIVE else remoteStatus
+                val lastSeen = existingObj.optLong("lastSeenAt", 0L)
+                val storedName = existingObj.optString("name", "")
+                val cleanName = memberName.trim().ifBlank { "Trader" }.take(32)
+                val needsHeartbeat = (now - lastSeen) >= 10 * 60_000L
+                val needsNameUpdate = cleanName.isNotBlank() && cleanName != "Trader" && cleanName != storedName
+                val needsOwnerRestore = isOwnerDevice && remoteStatus != MemberAccessStatus.ACTIVE
+
+                if (needsHeartbeat || needsNameUpdate || needsOwnerRestore) {
+                    val patchObj = JSONObject().apply {
+                        if (needsHeartbeat) put("lastSeenAt", now)
+                        if (needsNameUpdate) put("name", cleanName)
+                        if (needsOwnerRestore) put("status", MemberAccessStatus.ACTIVE.name)
+                    }.toString()
+                    val patchReq = Request.Builder()
+                        .url("$baseUrl/team_members/$deviceId.json")
+                        .patch(patchObj.toRequestBody(jsonMediaType))
+                        .build()
+                    restClient.newCall(patchReq).execute().close()
+                }
+            }
+            Result.success(resolvedStatus to deskConfig)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun fetchDeskConfigInternal(baseUrl: String): DeskConfig {
+        return try {
+            val req = Request.Builder().url("$baseUrl/desk_config.json").get().build()
+            restClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) return DeskConfig()
+                val raw = res.body?.string() ?: return DeskConfig()
+                if (raw == "null" || raw.isBlank()) return DeskConfig()
+                val obj = JSONObject(raw)
+                DeskConfig(
+                    announcement = obj.optString("announcement", "").trim(),
+                    requireApproval = obj.optBoolean("requireApproval", false),
+                    updatedAt = obj.optLong("updatedAt", 0L)
+                )
+            }
+        } catch (_: Exception) {
+            DeskConfig()
+        }
+    }
+
+    suspend fun fetchAllTeamMembers(databaseUrl: String): Result<List<TeamMember>> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = databaseUrl.trim().trimEnd('/')
+            val req = Request.Builder().url("$baseUrl/team_members.json").get().build()
+            restClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("HTTP ${res.code}"))
+                }
+                val raw = res.body?.string() ?: "null"
+                if (raw == "null" || raw.isBlank()) return@withContext Result.success(emptyList())
+                val root = JSONObject(raw)
+                val list = mutableListOf<TeamMember>()
+                val keys = root.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val item = root.optJSONObject(key) ?: continue
+                    list.add(
+                        TeamMember(
+                            deviceId = item.optString("deviceId", key),
+                            name = item.optString("name", "Trader"),
+                            status = item.optString("status", MemberAccessStatus.ACTIVE.name),
+                            joinedAt = item.optLong("joinedAt", 0L),
+                            lastSeenAt = item.optLong("lastSeenAt", 0L),
+                            appVersion = item.optString("appVersion", "1.0")
+                        )
+                    )
+                }
+                Result.success(list.sortedByDescending { it.lastSeenAt })
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateMemberStatus(
+        databaseUrl: String,
+        deviceId: String,
+        newStatus: MemberAccessStatus
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = databaseUrl.trim().trimEnd('/')
+            val payload = JSONObject().apply {
+                put("status", newStatus.name)
+            }.toString()
+            val req = Request.Builder()
+                .url("$baseUrl/team_members/$deviceId.json")
+                .patch(payload.toRequestBody(jsonMediaType))
+                .build()
+            restClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("Update member HTTP ${res.code}"))
+                }
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun removeTeamMember(
+        databaseUrl: String,
+        deviceId: String
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = databaseUrl.trim().trimEnd('/')
+            val req = Request.Builder()
+                .url("$baseUrl/team_members/$deviceId.json")
+                .delete()
+                .build()
+            restClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("Remove member HTTP ${res.code}"))
+                }
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateDeskConfig(
+        databaseUrl: String,
+        config: DeskConfig
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = databaseUrl.trim().trimEnd('/')
+            val payload = JSONObject().apply {
+                put("announcement", config.announcement.trim().take(240))
+                put("requireApproval", config.requireApproval)
+                put("updatedAt", System.currentTimeMillis())
+            }.toString()
+            val req = Request.Builder()
+                .url("$baseUrl/desk_config.json")
+                .put(payload.toRequestBody(jsonMediaType))
+                .build()
+            restClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("Desk config HTTP ${res.code}"))
+                }
+            }
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun closeStaleOpenSignals(
+        databaseUrl: String,
+        signals: List<TradingSignal>,
+        maxAgeMillis: Long = 24L * 3600_000L
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = databaseUrl.trim().trimEnd('/')
+            val cutoff = System.currentTimeMillis() - maxAgeMillis
+            val stale = signals.filter {
+                it.id.isNotBlank() && it.parsedStatus.isOpen && it.effectiveTimestampMillis() < cutoff
+            }
+            if (stale.isEmpty()) return@withContext Result.success(0)
+
+            val multiPatch = JSONObject()
+            stale.forEach { sig ->
+                multiPatch.put("${sig.id}/status", SignalStatus.CLOSED.name)
+                if (sig.parsedStatus == SignalStatus.TP1_HIT && sig.pnlPercent == 0.0) {
+                    multiPatch.put("${sig.id}/pnlPercent", sig.calculatePnlForStatus(SignalStatus.TP1_HIT))
+                }
+            }
+            val req = Request.Builder()
+                .url("$baseUrl/signals.json")
+                .patch(multiPatch.toString().toRequestBody(jsonMediaType))
+                .build()
+            restClient.newCall(req).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("Close stale HTTP ${res.code}"))
+                }
+            }
+            Result.success(stale.size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun pruneOldSignals(
+        databaseUrl: String,
+        keepLatestCount: Int = 35
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        try {
+            val baseUrl = databaseUrl.trim().trimEnd('/')
+            val shallowReq = Request.Builder().url("$baseUrl/signals.json?shallow=true").get().build()
+            val allKeys = restClient.newCall(shallowReq).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("Prune keys HTTP ${res.code}"))
+                }
+                val raw = res.body?.string() ?: "null"
+                if (raw == "null" || raw.isBlank()) return@withContext Result.success(0)
+                val obj = JSONObject(raw)
+                val list = mutableListOf<String>()
+                val it = obj.keys()
+                while (it.hasNext()) list.add(it.next())
+                list.sorted()
+            }
+
+            if (allKeys.size <= keepLatestCount) return@withContext Result.success(0)
+            val toDelete = allKeys.dropLast(keepLatestCount)
+            val multiDeletePatch = JSONObject()
+            toDelete.forEach { key ->
+                multiDeletePatch.put(key, JSONObject.NULL)
+            }
+            val patchReq = Request.Builder()
+                .url("$baseUrl/signals.json")
+                .patch(multiDeletePatch.toString().toRequestBody(jsonMediaType))
+                .build()
+            restClient.newCall(patchReq).execute().use { res ->
+                if (!res.isSuccessful) {
+                    return@withContext Result.failure(IllegalStateException("Prune delete HTTP ${res.code}"))
+                }
+            }
+            Result.success(toDelete.size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun applyRtdbSseEvent(
         eventName: String,
         rawJson: String,
@@ -302,7 +597,9 @@ class CustomFirebaseRepository(private val appContext: Context) {
             sl = obj.optDouble("sl", 0.0),
             tp1 = obj.optDouble("tp1", 0.0),
             tp2 = obj.optDouble("tp2", 0.0),
+            tp3 = obj.optDouble("tp3", 0.0),
             rr = obj.optString("rr", "1:2.0"),
+            lotSize = obj.optString("lotSize", ""),
             status = SignalStatus.fromRaw(obj.optString("status", "ACTIVE")).name,
             timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
             pnlPercent = obj.optDouble("pnlPercent", 0.0),
@@ -320,7 +617,9 @@ class CustomFirebaseRepository(private val appContext: Context) {
             sl = if (patch.has("sl")) patch.optDouble("sl", existing.sl) else existing.sl,
             tp1 = if (patch.has("tp1")) patch.optDouble("tp1", existing.tp1) else existing.tp1,
             tp2 = if (patch.has("tp2")) patch.optDouble("tp2", existing.tp2) else existing.tp2,
+            tp3 = if (patch.has("tp3")) patch.optDouble("tp3", existing.tp3) else existing.tp3,
             rr = if (patch.has("rr")) patch.optString("rr", existing.rr) else existing.rr,
+            lotSize = if (patch.has("lotSize")) patch.optString("lotSize", existing.lotSize) else existing.lotSize,
             status = if (patch.has("status")) SignalStatus.fromRaw(patch.optString("status")).name else existing.status,
             timestamp = if (patch.has("timestamp")) patch.optLong("timestamp", existing.timestamp) else existing.timestamp,
             pnlPercent = if (patch.has("pnlPercent")) patch.optDouble("pnlPercent", existing.pnlPercent) else existing.pnlPercent

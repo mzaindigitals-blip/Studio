@@ -36,6 +36,10 @@ class SignalMonitorService : Service() {
     private val seenStatuses = mutableMapOf<String, SignalStatus>()
     private var initialSnapshotProcessed = false
     private var currentConfigKey = ""
+    @Volatile
+    private var currentMutedPairs: Set<String> = emptySet()
+    @Volatile
+    private var canReceiveSignals: Boolean = true
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -75,6 +79,9 @@ class SignalMonitorService : Service() {
         monitorJob = serviceScope.launch {
             prefsStore.preferencesFlow
                 .flatMapLatest { prefs ->
+                    currentMutedPairs = prefs.mutedPairs
+                    canReceiveSignals = prefs.isOwnerDevice || prefs.cachedMemberStatus.canReceiveSignals
+
                     val nextKey = "${prefs.connectionMode}:${prefs.customConfig.databaseURL}:${prefs.customConfig.projectId}"
                     if (nextKey != currentConfigKey) {
                         currentConfigKey = nextKey
@@ -93,6 +100,7 @@ class SignalMonitorService : Service() {
                             if (url.isBlank()) emptyFlow()
                             else customRepo.observeRtdbSignals(
                                 databaseUrl = url,
+                                limit = 20,
                                 onConnected = {},
                                 onDisconnected = {}
                             )
@@ -114,15 +122,27 @@ class SignalMonitorService : Service() {
                         initialSnapshotProcessed = true
                         return@collectLatest
                     }
+                    if (!canReceiveSignals) {
+                        validSignals.forEach { seenStatuses[it.id] = it.parsedStatus }
+                        return@collectLatest
+                    }
+                    val now = System.currentTimeMillis()
+                    val maxAgeMs = 24L * 3600_000L
                     validSignals.forEach { signal ->
                         val previousStatus = seenStatuses[signal.id]
                         val currentStatus = signal.parsedStatus
+                        val symUpper = signal.symbol.trim().uppercase(java.util.Locale.US)
+                        val isAllowedPair = symUpper !in currentMutedPairs
+                        val isFresh = (now - signal.effectiveTimestampMillis()) <= maxAgeMs
+
                         if (previousStatus == null) {
                             seenStatuses[signal.id] = currentStatus
-                            SignalNotificationHelper.showNewSignalNotification(applicationContext, signal)
+                            if (isAllowedPair && isFresh) {
+                                SignalNotificationHelper.showNewSignalNotification(applicationContext, signal)
+                            }
                         } else if (previousStatus != currentStatus) {
                             seenStatuses[signal.id] = currentStatus
-                            if (currentStatus != SignalStatus.ACTIVE) {
+                            if (currentStatus != SignalStatus.ACTIVE && isAllowedPair && isFresh) {
                                 SignalNotificationHelper.showStatusUpdateNotification(
                                     applicationContext,
                                     signal,

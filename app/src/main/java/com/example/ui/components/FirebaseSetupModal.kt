@@ -74,19 +74,28 @@ import com.google.firebase.auth.auth
 fun FirebaseSetupModal(
     uiState: TradingDeskUiState,
     onDismiss: () -> Unit,
-    onSaveAndConnectCustom: (CustomFirebaseConfig) -> Unit,
+    onSaveAndConnectCustom: (CustomFirebaseConfig, String?) -> Unit,
     onLoadDemoMode: () -> Unit,
     onConnectBuiltInCloud: () -> Unit,
     onSendAdminDiagnostic: () -> Unit
 ) {
     val colors = TerminalTheme.colors
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var selectedTab by remember {
+    val isBuiltInAvailable = remember(context) {
+        FirebaseApp.getApps(context).isNotEmpty()
+    }
+    val showCloudSyncTab = uiState.isAdminUnlocked || isBuiltInAvailable
+
+    var selectedTab by remember(showCloudSyncTab) {
         mutableIntStateOf(
-            if (uiState.connectionMode == ConnectionMode.BUILT_IN_FIRESTORE) 1 else 0
+            if (showCloudSyncTab && uiState.connectionMode == ConnectionMode.BUILT_IN_FIRESTORE) 1 else 0
         )
     }
 
+    var memberNameText by remember(uiState.memberName) {
+        mutableStateOf(if (uiState.memberName == "Trader") "" else uiState.memberName)
+    }
     var rawConfigText by remember { mutableStateOf("") }
     var apiKey by remember(uiState.customConfig) { mutableStateOf(uiState.customConfig.apiKey) }
     var authDomain by remember(uiState.customConfig) { mutableStateOf(uiState.customConfig.authDomain) }
@@ -124,7 +133,7 @@ fun FirebaseSetupModal(
                         text = if (uiState.isAdminUnlocked) {
                             "Admin setup · Paste RTDB URL, firebaseConfig, or Team Code"
                         } else {
-                            "Paste your Team Access Code (DVX1:...) from Muhammad Zain"
+                            "Enter your Name and Team Access Code (DVX1:...) from Muhammad Zain"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.textSecondary
@@ -141,40 +150,59 @@ fun FirebaseSetupModal(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                SegmentedButton(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                    colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = colors.emeraldContainer,
-                        activeContentColor = colors.emeraldBuy,
-                        inactiveContainerColor = colors.surfaceElevated,
-                        inactiveContentColor = colors.textSecondary
-                    )
-                ) {
-                    Text("Team Code / URL")
+            if (showCloudSyncTab) {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        colors = SegmentedButtonDefaults.colors(
+                            activeContainerColor = colors.emeraldContainer,
+                            activeContentColor = colors.emeraldBuy,
+                            inactiveContainerColor = colors.surfaceElevated,
+                            inactiveContentColor = colors.textSecondary
+                        )
+                    ) {
+                        Text("Team Code / URL")
+                    }
+                    SegmentedButton(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        colors = SegmentedButtonDefaults.colors(
+                            activeContainerColor = colors.goldContainer,
+                            activeContentColor = colors.goldAccent,
+                            inactiveContainerColor = colors.surfaceElevated,
+                            inactiveContentColor = colors.textSecondary
+                        )
+                    ) {
+                        Text("Cloud Account Sync")
+                    }
                 }
-                SegmentedButton(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                    colors = SegmentedButtonDefaults.colors(
-                        activeContainerColor = colors.goldContainer,
-                        activeContentColor = colors.goldAccent,
-                        inactiveContainerColor = colors.surfaceElevated,
-                        inactiveContentColor = colors.textSecondary
-                    )
-                ) {
-                    Text("Cloud Account Sync")
-                }
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
             if (selectedTab == 0) {
+                OutlinedTextField(
+                    value = memberNameText,
+                    onValueChange = { memberNameText = it },
+                    label = { Text("Your Name (shown to Admin)", style = MaterialTheme.typography.bodySmall) },
+                    placeholder = { Text("e.g. Bilal, Usman, Ali", color = colors.textMuted) },
+                    singleLine = true,
+                    colors = terminalTextFieldColors(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("member_name_input")
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 Text(
-                    text = "Paste Team Code (DVX1:...), RTDB URL, or firebaseConfig",
+                    text = if (uiState.isAdminUnlocked) {
+                        "Paste Team Code (DVX1:...), RTDB URL, or firebaseConfig"
+                    } else {
+                        "Paste Team Access Code (DVX1:...)"
+                    },
                     style = MaterialTheme.typography.labelLarge,
                     color = colors.textPrimary
                 )
@@ -195,7 +223,11 @@ fun FirebaseSetupModal(
                     },
                     placeholder = {
                         Text(
-                            text = "DVX1:eyJkYXRhYmFzZVVSTCI6...  OR  https://your-app-default-rtdb.firebaseio.com",
+                            text = if (uiState.isAdminUnlocked) {
+                                "DVX1:eyJkYXRhYmFzZVVSTCI6...  OR  https://your-app-default-rtdb.firebaseio.com"
+                            } else {
+                                "DVX1:eyJkYXRhYmFzZVVSTCI6..."
+                            },
                             style = MaterialTheme.typography.bodySmall.copy(fontFamily = JetBrainsMonoFontFamily),
                             color = colors.textMuted
                         )
@@ -221,71 +253,74 @@ fun FirebaseSetupModal(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                if (uiState.isAdminUnlocked) {
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                TextButton(
-                    onClick = { showManualFields = !showManualFields },
-                    modifier = Modifier.align(Alignment.Start)
-                ) {
-                    Icon(
-                        imageVector = if (showManualFields) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                        contentDescription = null,
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (showManualFields) "Hide manual Firebase fields" else "Show manual Firebase fields",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.textSecondary
-                    )
-                }
-
-                if (showManualFields) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    ConfigField(
-                        label = "databaseURL (Realtime Database)",
-                        value = databaseURL,
-                        onValueChange = { databaseURL = it },
-                        placeholder = "https://your-project-default-rtdb.firebaseio.com"
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    ConfigField(
-                        label = "projectId",
-                        value = projectId,
-                        onValueChange = { projectId = it },
-                        placeholder = "my-trading-desk"
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ConfigField(
-                            label = "apiKey",
-                            value = apiKey,
-                            onValueChange = { apiKey = it },
-                            placeholder = "AIzaSy...",
-                            modifier = Modifier.weight(1f)
+                    TextButton(
+                        onClick = { showManualFields = !showManualFields },
+                        modifier = Modifier.align(Alignment.Start)
+                    ) {
+                        Icon(
+                            imageVector = if (showManualFields) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                            contentDescription = null,
+                            tint = colors.textSecondary,
+                            modifier = Modifier.size(18.dp)
                         )
-                        ConfigField(
-                            label = "authDomain",
-                            value = authDomain,
-                            onValueChange = { authDomain = it },
-                            placeholder = "app.firebaseapp.com",
-                            modifier = Modifier.weight(1f)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (showManualFields) "Hide manual Firebase fields" else "Show manual Firebase fields",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.textSecondary
                         )
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    ConfigField(
-                        label = "appId",
-                        value = appId,
-                        onValueChange = { appId = it },
-                        placeholder = "1:123456:web:abcdef"
-                    )
+
+                    if (showManualFields) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        ConfigField(
+                            label = "databaseURL (Realtime Database)",
+                            value = databaseURL,
+                            onValueChange = { databaseURL = it },
+                            placeholder = "https://your-project-default-rtdb.firebaseio.com"
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        ConfigField(
+                            label = "projectId",
+                            value = projectId,
+                            onValueChange = { projectId = it },
+                            placeholder = "my-trading-desk"
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ConfigField(
+                                label = "apiKey",
+                                value = apiKey,
+                                onValueChange = { apiKey = it },
+                                placeholder = "AIzaSy...",
+                                modifier = Modifier.weight(1f)
+                            )
+                            ConfigField(
+                                label = "authDomain",
+                                value = authDomain,
+                                onValueChange = { authDomain = it },
+                                placeholder = "app.firebaseapp.com",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        ConfigField(
+                            label = "appId",
+                            value = appId,
+                            onValueChange = { appId = it },
+                            placeholder = "1:123456:web:abcdef"
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Button(
                     onClick = {
+                        val trimmedName = memberNameText.trim().takeIf { it.isNotBlank() }
                         val candidate = CustomFirebaseConfig(
                             apiKey = apiKey.trim(),
                             authDomain = authDomain.trim(),
@@ -296,12 +331,12 @@ fun FirebaseSetupModal(
                         if (rawConfigText.isNotBlank()) {
                             parseFirebaseConfigInput(rawConfigText).fold(
                                 onSuccess = { parsed ->
-                                    onSaveAndConnectCustom(parsed)
+                                    onSaveAndConnectCustom(parsed, trimmedName)
                                     onDismiss()
                                 },
                                 onFailure = { err ->
                                     if (candidate.isValid) {
-                                        onSaveAndConnectCustom(candidate)
+                                        onSaveAndConnectCustom(candidate, trimmedName)
                                         onDismiss()
                                     } else {
                                         parseError = err.localizedMessage
@@ -309,9 +344,13 @@ fun FirebaseSetupModal(
                                 }
                             )
                         } else if (!candidate.isValid) {
-                            parseError = "Enter a valid Team Code (DVX1:...), databaseURL, or Firestore config."
+                            parseError = if (uiState.isAdminUnlocked) {
+                                "Enter a valid Team Code (DVX1:...), databaseURL, or Firestore config."
+                            } else {
+                                "Paste a valid Team Access Code (DVX1:...) shared by Muhammad Zain."
+                            }
                         } else {
-                            onSaveAndConnectCustom(candidate)
+                            onSaveAndConnectCustom(candidate, trimmedName)
                             onDismiss()
                         }
                     },

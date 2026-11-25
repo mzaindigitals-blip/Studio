@@ -21,11 +21,13 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Calculate
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.CloudQueue
 import androidx.compose.material.icons.rounded.FilterListOff
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Sensors
+import androidx.compose.material.icons.rounded.Today
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,10 +49,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.model.ConnectionMode
 import com.example.model.ConnectionStatus
+import com.example.model.MemberAccessStatus
 import com.example.model.SignalSide
 import com.example.model.SignalStatus
 import com.example.model.TradingSignal
+import com.example.ui.components.AnnouncementBannerCard
+import com.example.ui.components.MemberAccessGateCard
 import com.example.ui.components.SignalCard
+import com.example.ui.components.TradingSessionStrip
 import com.example.ui.theme.TerminalTheme
 import com.example.util.ShareCardType
 import com.example.viewmodel.SideFilter
@@ -63,14 +69,18 @@ fun LiveSignalsScreen(
     uiState: TradingDeskUiState,
     onSelectSideFilter: (SideFilter) -> Unit,
     onSelectSymbolFilter: (String) -> Unit,
+    onSetLiveTodayOnly: (Boolean) -> Unit,
     onUpdateStatus: (TradingSignal, SignalStatus) -> Unit,
     onDismissNew: (String) -> Unit,
     onClearLocalFeed: () -> Unit,
     onRestoreClearedFeed: () -> Unit,
     onOpenFirebaseSetup: () -> Unit,
     onLoadDemoMode: () -> Unit,
+    onOpenRiskCalculator: () -> Unit = {},
+    onRefreshTeamSync: () -> Unit = {},
     onSaveCard: (TradingSignal, ShareCardType) -> Unit = { _, _ -> },
     onShareCard: (TradingSignal) -> Unit = {},
+    onCopyPrice: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val colors = TerminalTheme.colors
@@ -101,7 +111,7 @@ fun LiveSignalsScreen(
         (uiState.isAdminUnlocked || uiState.connectionMode == ConnectionMode.DEMO)
 
     Column(modifier = modifier.fillMaxSize()) {
-        // Filter Bar + Clear / Restore Controls
+        // Filter Bar + Today Rollover Chip + Risk Calculator + Clear / Restore Controls
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -115,6 +125,75 @@ fun LiveSignalsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Today-Only Auto Rollover Toggle Chip
+                FilterChip(
+                    selected = uiState.liveTodayOnly,
+                    onClick = { onSetLiveTodayOnly(!uiState.liveTodayOnly) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Today,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    label = {
+                        val suffix = if (uiState.liveTodayOnly && uiState.hiddenOlderLiveCount > 0) {
+                            " (+${uiState.hiddenOlderLiveCount} old)"
+                        } else {
+                            ""
+                        }
+                        Text(
+                            text = if (uiState.liveTodayOnly) "Today$suffix" else "All Recent",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = colors.goldContainer,
+                        selectedLabelColor = colors.goldAccent,
+                        selectedLeadingIconColor = colors.goldAccent,
+                        containerColor = colors.surface,
+                        labelColor = colors.textSecondary
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = uiState.liveTodayOnly,
+                        borderColor = colors.border,
+                        selectedBorderColor = colors.goldAccent.copy(alpha = 0.6f)
+                    ),
+                    modifier = Modifier.testTag("filter_live_today_only")
+                )
+
+                // Quick Lot & Risk Calculator Chip
+                FilterChip(
+                    selected = false,
+                    onClick = onOpenRiskCalculator,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Calculate,
+                            contentDescription = null,
+                            tint = colors.cyanInfo,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = "Lot Calc",
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = colors.surface,
+                        labelColor = colors.cyanInfo
+                    ),
+                    border = FilterChipDefaults.filterChipBorder(
+                        enabled = true,
+                        selected = false,
+                        borderColor = colors.cyanInfo.copy(alpha = 0.45f),
+                        selectedBorderColor = colors.cyanInfo
+                    ),
+                    modifier = Modifier.testTag("open_quick_calculator_chip")
+                )
+
                 SideFilter.entries.forEach { sideOption ->
                     val selected = uiState.sideFilter == sideOption
                     val chipAccent = when (sideOption) {
@@ -147,7 +226,7 @@ fun LiveSignalsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(2.dp))
 
                 availableSymbols.forEach { symbolOption ->
                     val selected = uiState.symbolFilter.equals(symbolOption, ignoreCase = true)
@@ -231,6 +310,16 @@ fun LiveSignalsScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize()
         ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                TradingSessionStrip()
+            }
+
+            if (uiState.deskConfig.announcement.isNotBlank()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    AnnouncementBannerCard(announcement = uiState.deskConfig.announcement)
+                }
+            }
+
             if (uiState.connectionStatus != ConnectionStatus.FIREBASE_LIVE) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     ConnectionBannerCard(
@@ -241,69 +330,85 @@ fun LiveSignalsScreen(
                 }
             }
 
-            when (val stream = uiState.signalsState) {
-                is SignalsStreamState.Loading -> {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 48.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator(color = colors.emeraldBuy)
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "Connecting to Digital Vertex stream...",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = colors.textSecondary
-                                )
+            if (uiState.memberAccessStatus != MemberAccessStatus.ACTIVE && !uiState.isAdminUnlocked) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    MemberAccessGateCard(
+                        accessStatus = uiState.memberAccessStatus,
+                        memberName = uiState.memberName,
+                        deviceId = uiState.deviceId,
+                        onRefreshSync = onRefreshTeamSync
+                    )
+                }
+            } else {
+                when (val stream = uiState.signalsState) {
+                    is SignalsStreamState.Loading -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 48.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    CircularProgressIndicator(color = colors.emeraldBuy)
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Connecting to Digital Vertex stream...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = colors.textSecondary
+                                    )
+                                }
                             }
                         }
                     }
-                }
 
-                is SignalsStreamState.Error -> {
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        ErrorEmptyStateCard(
-                            title = "Firebase Stream Interrupted",
-                            message = stream.message,
-                            onOpenSetup = onOpenFirebaseSetup,
-                            onLoadDemo = onLoadDemoMode
-                        )
-                    }
-                }
-
-                is SignalsStreamState.Success -> {
-                    if (filteredSignals.isEmpty()) {
+                    is SignalsStreamState.Error -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            EmptySignalsCard(
-                                hasActiveFilters = uiState.sideFilter != SideFilter.ALL || uiState.symbolFilter != "ALL",
-                                clearedCount = uiState.clearedSignalsCount,
-                                onClearFilters = {
-                                    onSelectSideFilter(SideFilter.ALL)
-                                    onSelectSymbolFilter("ALL")
-                                },
-                                onRestoreCleared = onRestoreClearedFeed
+                            ErrorEmptyStateCard(
+                                title = "Firebase Stream Interrupted",
+                                message = stream.message,
+                                onOpenSetup = onOpenFirebaseSetup,
+                                onLoadDemo = onLoadDemoMode
                             )
                         }
-                    } else {
-                        items(
-                            items = filteredSignals,
-                            key = { it.id.ifBlank { "${it.symbol}_${it.timestamp}" } }
-                        ) { signal ->
-                            SignalCard(
-                                signal = signal,
-                                isNew = signal.id in uiState.highlightedNewIds,
-                                isUpdating = signal.id in uiState.updatingSignalIds,
-                                showAdminActions = showAdminCardActions,
-                                onUpdateStatus = { newStatus -> onUpdateStatus(signal, newStatus) },
-                                onDismissNew = { onDismissNew(signal.id) },
-                                themeKey = uiState.themeId.name,
-                                livePrice = uiState.livePrices[signal.symbol.uppercase(Locale.US)],
-                                onSaveCard = { cardType -> onSaveCard(signal, cardType) },
-                                onShareCard = { onShareCard(signal) }
-                            )
+                    }
+
+                    is SignalsStreamState.Success -> {
+                        if (filteredSignals.isEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                EmptySignalsCard(
+                                    hasActiveFilters = uiState.sideFilter != SideFilter.ALL || uiState.symbolFilter != "ALL",
+                                    clearedCount = uiState.clearedSignalsCount,
+                                    hiddenOlderCount = uiState.hiddenOlderLiveCount,
+                                    liveTodayOnly = uiState.liveTodayOnly,
+                                    onShowAllRecent = { onSetLiveTodayOnly(false) },
+                                    onClearFilters = {
+                                        onSelectSideFilter(SideFilter.ALL)
+                                        onSelectSymbolFilter("ALL")
+                                    },
+                                    onRestoreCleared = onRestoreClearedFeed
+                                )
+                            }
+                        } else {
+                            items(
+                                items = filteredSignals,
+                                key = { it.id.ifBlank { "${it.symbol}_${it.timestamp}" } }
+                            ) { signal ->
+                                SignalCard(
+                                    signal = signal,
+                                    isNew = signal.id in uiState.highlightedNewIds,
+                                    isUpdating = signal.id in uiState.updatingSignalIds,
+                                    showAdminActions = showAdminCardActions,
+                                    onUpdateStatus = { newStatus -> onUpdateStatus(signal, newStatus) },
+                                    onDismissNew = { onDismissNew(signal.id) },
+                                    themeKey = uiState.themeId.name,
+                                    livePrice = uiState.livePrices[signal.symbol.uppercase(Locale.US)],
+                                    showLiveReferencePrice = uiState.autoTrackTpSlEnabled,
+                                    onSaveCard = { cardType -> onSaveCard(signal, cardType) },
+                                    onShareCard = { onShareCard(signal) },
+                                    onCopyPrice = onCopyPrice
+                                )
+                            }
                         }
                     }
                 }
@@ -346,9 +451,9 @@ private fun ConnectionBannerCard(
                 )
                 Text(
                     text = if (isDisconnected) {
-                        uiState.statusError ?: "Disconnected from Firebase"
+                        uiState.statusError ?: "Disconnected from Digital Vertex stream"
                     } else {
-                        "Demo Mode active — tap Connect Firebase or paste Team Code"
+                        "Demo Mode active — tap Connect / Team Code to receive live signals"
                     },
                     style = MaterialTheme.typography.titleSmall,
                     color = colors.textPrimary,
@@ -397,6 +502,9 @@ private fun ConnectionBannerCard(
 private fun EmptySignalsCard(
     hasActiveFilters: Boolean,
     clearedCount: Int,
+    hiddenOlderCount: Int,
+    liveTodayOnly: Boolean,
+    onShowAllRecent: () -> Unit,
     onClearFilters: () -> Unit,
     onRestoreCleared: () -> Unit
 ) {
@@ -426,7 +534,8 @@ private fun EmptySignalsCard(
                 text = when {
                     hasActiveFilters -> "No signals match current filters"
                     clearedCount > 0 -> "Signal feed cleared — ready for new alerts"
-                    else -> "Listening for laptop bot signals"
+                    liveTodayOnly && hiddenOlderCount > 0 -> "New trading day — 0 signals pushed today yet"
+                    else -> "Listening for live bot signals"
                 },
                 style = MaterialTheme.typography.titleMedium,
                 color = colors.textPrimary,
@@ -436,8 +545,9 @@ private fun EmptySignalsCard(
             Text(
                 text = when {
                     hasActiveFilters -> "Reset BUY/SELL or pair filters to view available setups."
-                    clearedCount > 0 -> "New signals from your Python bot will appear here immediately with sound & notification alerts."
-                    else -> "Signals pushed by Muhammad Zain's Python bot will stream here live in real time."
+                    clearedCount > 0 -> "New signals from Muhammad Zain's bot will appear here immediately with sound & notification alerts."
+                    liveTodayOnly && hiddenOlderCount > 0 -> "Yesterday's $hiddenOlderCount older signals are safely archived in Active & History. Tap below to inspect them."
+                    else -> "Signals pushed by Muhammad Zain's VPS bot will stream here live in real time."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = colors.textSecondary,
@@ -466,6 +576,15 @@ private fun EmptySignalsCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Restore $clearedCount Cleared Signals")
+                }
+            } else if (liveTodayOnly && hiddenOlderCount > 0) {
+                Spacer(modifier = Modifier.height(14.dp))
+                OutlinedButton(
+                    onClick = onShowAllRecent,
+                    border = BorderStroke(1.dp, colors.goldAccent.copy(alpha = 0.65f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.goldAccent)
+                ) {
+                    Text("Show $hiddenOlderCount Previous Signals")
                 }
             }
         }

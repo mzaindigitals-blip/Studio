@@ -5,12 +5,16 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.ConnectionMode
 import com.example.model.CustomFirebaseConfig
+import com.example.model.MemberAccessStatus
 import com.example.ui.theme.DeskThemeId
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.util.Locale
+import java.util.UUID
 
 private val Context.signalDeskDataStore by preferencesDataStore(name = "signal_desk_prefs")
 
@@ -23,9 +27,15 @@ data class PersistedDeskPreferences(
     val historyClearedBeforeTimestamp: Long = 0L,
     val adminPin: String = "2026",
     val backgroundAlertsEnabled: Boolean = false,
-    val autoTrackTpSlEnabled: Boolean = true,
-    val autoSaveCardImages: Boolean = true,
-    val showManualStatusButtons: Boolean = false
+    val autoTrackTpSlEnabled: Boolean = false,
+    val autoSaveCardImages: Boolean = false,
+    val showManualStatusButtons: Boolean = false,
+    val deviceId: String = "",
+    val memberName: String = "Trader",
+    val isOwnerDevice: Boolean = false,
+    val liveTodayOnly: Boolean = true,
+    val mutedPairs: Set<String> = emptySet(),
+    val cachedMemberStatus: MemberAccessStatus = MemberAccessStatus.ACTIVE
 )
 
 class ConfigPreferencesStore(private val context: Context) {
@@ -42,9 +52,15 @@ class ConfigPreferencesStore(private val context: Context) {
         val HISTORY_CLEARED_BEFORE_TS = longPreferencesKey("history_cleared_before_ts")
         val ADMIN_PIN = stringPreferencesKey("admin_pin")
         val BACKGROUND_ALERTS = booleanPreferencesKey("background_alerts_enabled")
-        val AUTO_TRACK_TP_SL = booleanPreferencesKey("auto_track_tp_sl")
-        val AUTO_SAVE_CARD_IMAGES = booleanPreferencesKey("auto_save_card_images")
+        val AUTO_TRACK_TP_SL = booleanPreferencesKey("auto_track_tp_sl_v2")
+        val AUTO_SAVE_CARD_IMAGES = booleanPreferencesKey("auto_save_card_images_v2")
         val SHOW_MANUAL_STATUS_BUTTONS = booleanPreferencesKey("show_manual_status_buttons")
+        val DEVICE_ID = stringPreferencesKey("member_device_id")
+        val MEMBER_NAME = stringPreferencesKey("member_name")
+        val IS_OWNER_DEVICE = booleanPreferencesKey("is_owner_device")
+        val LIVE_TODAY_ONLY = booleanPreferencesKey("live_today_only")
+        val MUTED_PAIRS = stringSetPreferencesKey("muted_pairs")
+        val CACHED_MEMBER_STATUS = stringPreferencesKey("cached_member_status")
     }
 
     val preferencesFlow: Flow<PersistedDeskPreferences> =
@@ -66,11 +82,32 @@ class ConfigPreferencesStore(private val context: Context) {
                 historyClearedBeforeTimestamp = prefs[Keys.HISTORY_CLEARED_BEFORE_TS] ?: 0L,
                 adminPin = prefs[Keys.ADMIN_PIN] ?: "2026",
                 backgroundAlertsEnabled = prefs[Keys.BACKGROUND_ALERTS] ?: false,
-                autoTrackTpSlEnabled = prefs[Keys.AUTO_TRACK_TP_SL] ?: true,
-                autoSaveCardImages = prefs[Keys.AUTO_SAVE_CARD_IMAGES] ?: true,
-                showManualStatusButtons = prefs[Keys.SHOW_MANUAL_STATUS_BUTTONS] ?: false
+                autoTrackTpSlEnabled = prefs[Keys.AUTO_TRACK_TP_SL] ?: false,
+                autoSaveCardImages = prefs[Keys.AUTO_SAVE_CARD_IMAGES] ?: false,
+                showManualStatusButtons = prefs[Keys.SHOW_MANUAL_STATUS_BUTTONS] ?: false,
+                deviceId = prefs[Keys.DEVICE_ID] ?: "",
+                memberName = prefs[Keys.MEMBER_NAME] ?: "Trader",
+                isOwnerDevice = prefs[Keys.IS_OWNER_DEVICE] ?: false,
+                liveTodayOnly = prefs[Keys.LIVE_TODAY_ONLY] ?: true,
+                mutedPairs = prefs[Keys.MUTED_PAIRS] ?: emptySet(),
+                cachedMemberStatus = MemberAccessStatus.fromRaw(prefs[Keys.CACHED_MEMBER_STATUS])
             )
         }
+
+    suspend fun ensureDeviceId(): String {
+        var resolved = ""
+        context.signalDeskDataStore.edit { prefs ->
+            val existing = prefs[Keys.DEVICE_ID]
+            if (!existing.isNullOrBlank()) {
+                resolved = existing
+            } else {
+                val created = "DVX-${UUID.randomUUID().toString().replace("-", "").take(8).uppercase(Locale.US)}"
+                prefs[Keys.DEVICE_ID] = created
+                resolved = created
+            }
+        }
+        return resolved
+    }
 
     suspend fun saveCustomConfig(config: CustomFirebaseConfig, mode: ConnectionMode) {
         context.signalDeskDataStore.edit { prefs ->
@@ -140,6 +177,38 @@ class ConfigPreferencesStore(private val context: Context) {
     suspend fun setShowManualStatusButtons(show: Boolean) {
         context.signalDeskDataStore.edit { prefs ->
             prefs[Keys.SHOW_MANUAL_STATUS_BUTTONS] = show
+        }
+    }
+
+    suspend fun setMemberName(name: String) {
+        val clean = name.trim().ifBlank { "Trader" }.take(32)
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.MEMBER_NAME] = clean
+        }
+    }
+
+    suspend fun setIsOwnerDevice(isOwner: Boolean) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.IS_OWNER_DEVICE] = isOwner
+        }
+    }
+
+    suspend fun setLiveTodayOnly(todayOnly: Boolean) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.LIVE_TODAY_ONLY] = todayOnly
+        }
+    }
+
+    suspend fun setMutedPairs(pairs: Set<String>) {
+        val normalized = pairs.map { it.trim().uppercase(Locale.US) }.filter { it.isNotBlank() }.toSet()
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.MUTED_PAIRS] = normalized
+        }
+    }
+
+    suspend fun setCachedMemberStatus(status: MemberAccessStatus) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.CACHED_MEMBER_STATUS] = status.name
         }
     }
 }

@@ -22,26 +22,35 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircleOutline
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.SettingsEthernet
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,16 +68,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.model.ConnectionMode
+import com.example.model.MemberAccessStatus
 import com.example.ui.components.AdminDeckCard
+import com.example.ui.components.LotSizeCalculatorCard
+import com.example.ui.components.MutedPairsManagerCard
 import com.example.ui.components.StatusBadgePill
+import com.example.ui.components.TradingSessionStrip
 import com.example.ui.theme.DeskThemeId
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.TerminalTheme
 import com.example.ui.theme.paletteForTheme
 import com.example.viewmodel.TradingDeskUiState
+import java.util.Locale
 
 private const val EXPECTED_SIGNAL_JSON = """{
-  "id": "sig_20261120_xau_01",
+  "id": "sig_20261125_xau_01",
   "symbol": "XAUUSD",
   "timeframe": "M15",
   "side": "BUY",
@@ -77,6 +91,8 @@ private const val EXPECTED_SIGNAL_JSON = """{
   "sl": 2635.00,
   "tp1": 2652.50,
   "tp2": 2662.50,
+  "tp3": 2675.00,
+  "lotSize": "0.02",
   "rr": "1:2.6",
   "status": "ACTIVE",
   "timestamp": 1763673400000
@@ -86,15 +102,15 @@ private fun buildPythonBridgeSnippet(databaseUrl: String): String {
     val effectiveUrl = databaseUrl.ifBlank { "https://YOUR-PROJECT-default-rtdb.firebaseio.com" }
     return """import time, requests
 
-# Digital Vertex Free RTDB Endpoint (Muhammad Zain):
+# Digital Vertex Free RTDB Endpoint (Muhammad Zain VPS Bot):
 DATABASE_URL = "$effectiveUrl"
 
-def push_signal(symbol, timeframe, side, strategy, entry, sl, tp1, tp2, rr):
+def push_signal(symbol, timeframe, side, strategy, entry, sl, tp1, tp2, rr, tp3=0.0, lot_size=""):
     payload = {
-        "symbol": symbol,
+        "symbol": symbol.upper(),
         "timeframe": timeframe,
-        "side": side,          # "BUY" or "SELL"
-        "strategy": strategy,  # e.g. "3-Module PA", "RSI+EMA"
+        "side": side,            # "BUY" or "SELL"
+        "strategy": strategy,    # e.g. "3-Module PA", "RSI+EMA"
         "entry": float(entry),
         "sl": float(sl),
         "tp1": float(tp1),
@@ -103,12 +119,16 @@ def push_signal(symbol, timeframe, side, strategy, entry, sl, tp1, tp2, rr):
         "status": "ACTIVE",
         "timestamp": int(time.time() * 1000)
     }
+    if tp3 and float(tp3) > 0:
+        payload["tp3"] = float(tp3)
+    if lot_size:
+        payload["lotSize"] = str(lot_size)
     res = requests.post(f"{DATABASE_URL}/signals.json", json=payload, timeout=10)
     res.raise_for_status()
     return res.json()["name"]
 
 def update_signal_status(signal_key, new_status, pnl_percent=None):
-    # new_status: "TP1_HIT", "TP2_HIT", "SL_HIT", "CLOSED"
+    # Bot-authoritative updates: "TP1_HIT", "TP2_HIT", "SL_HIT", "CLOSED"
     patch_data = {"status": new_status}
     if pnl_percent is not None:
         patch_data["pnlPercent"] = float(pnl_percent)
@@ -125,11 +145,20 @@ fun BridgeAndSettingsScreen(
     onToggleBackgroundAlerts: () -> Unit,
     onRestoreClearedFeed: () -> Unit,
     onSelectTheme: (DeskThemeId) -> Unit,
-    onUnlockAdmin: (String) -> Boolean,
+    onUpdateMemberName: (String) -> Unit,
+    onRefreshTeamSync: () -> Unit,
+    onToggleMutedPair: (String) -> Unit,
     onLockAdmin: () -> Unit,
     onUpdateAdminPin: (String) -> Unit,
     onSendAdminDiagnostic: () -> Unit,
     onClearAllFirebaseSignals: () -> Unit,
+    onCloseStaleOpenSignals: () -> Unit,
+    onPruneOldSignals: () -> Unit,
+    onRefreshTeamMembers: () -> Unit,
+    onUpdateMemberStatus: (String, MemberAccessStatus) -> Unit,
+    onRemoveTeamMember: (String) -> Unit,
+    onPublishAnnouncement: (String) -> Unit,
+    onSetRequireMemberApproval: (Boolean) -> Unit,
     onToggleAutoTrackTpSl: (Boolean) -> Unit = {},
     onToggleAutoSaveCards: (Boolean) -> Unit = {},
     onToggleShowManualButtons: (Boolean) -> Unit = {},
@@ -138,6 +167,9 @@ fun BridgeAndSettingsScreen(
 ) {
     val colors = TerminalTheme.colors
     val clipboard = LocalClipboardManager.current
+    val knownSymbols = remember(uiState.signals) {
+        uiState.signals.map { it.symbol.uppercase(Locale.US) }.distinct()
+    }
 
     LazyColumn(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
@@ -145,7 +177,7 @@ fun BridgeAndSettingsScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier.fillMaxSize()
     ) {
-        // Hero Banner Card
+        // Hero Banner Card (Adapts cleanly between Client View and Owner Admin View)
         item {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -153,7 +185,7 @@ fun BridgeAndSettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 720.dp)
-                    .height(148.dp)
+                    .height(144.dp)
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Image(
@@ -185,12 +217,20 @@ fun BridgeAndSettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Digital Vertex · Desk & Admin",
+                            text = if (uiState.isAdminUnlocked) {
+                                "Digital Vertex · Owner Command"
+                            } else {
+                                "Digital Vertex · Trading Tools"
+                            },
                             style = MaterialTheme.typography.headlineSmall,
                             color = colors.textPrimary
                         )
                         Text(
-                            text = "Owner: Muhammad Zain · 100% Free Live Bot Receiver",
+                            text = if (uiState.isAdminUnlocked) {
+                                "Owner: Muhammad Zain · Team Roster, Spark Quota & VPS Bridge"
+                            } else {
+                                "By Muhammad Zain · Risk Calculator, Alerts & Themes"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.textSecondary
                         )
@@ -199,7 +239,63 @@ fun BridgeAndSettingsScreen(
             }
         }
 
-        // Theme Picker Card (Client & Admin)
+        // Hidden Owner Command Center (Rendered ONLY when Admin Unlocked!)
+        if (uiState.isAdminUnlocked) {
+            item {
+                AdminDeckCard(
+                    uiState = uiState,
+                    onLockAdmin = onLockAdmin,
+                    onUpdateAdminPin = onUpdateAdminPin,
+                    onOpenFirebaseSetup = onOpenFirebaseSetup,
+                    onSendAdminDiagnostic = onSendAdminDiagnostic,
+                    onClearAllFirebaseSignals = onClearAllFirebaseSignals,
+                    onCloseStaleOpenSignals = onCloseStaleOpenSignals,
+                    onPruneOldSignals = onPruneOldSignals,
+                    onRefreshTeamMembers = onRefreshTeamMembers,
+                    onUpdateMemberStatus = onUpdateMemberStatus,
+                    onRemoveTeamMember = onRemoveTeamMember,
+                    onPublishAnnouncement = onPublishAnnouncement,
+                    onSetRequireMemberApproval = onSetRequireMemberApproval,
+                    onToggleAutoTrackTpSl = onToggleAutoTrackTpSl,
+                    onToggleAutoSaveCards = onToggleAutoSaveCards,
+                    onToggleShowManualButtons = onToggleShowManualButtons,
+                    onShowMessage = onShowMessage
+                )
+            }
+        }
+
+        // Client Membership Card (Name, Device ID, Live Access Status)
+        item {
+            MemberProfileCard(
+                uiState = uiState,
+                onSaveMemberName = onUpdateMemberName,
+                onRefreshSync = onRefreshTeamSync
+            )
+        }
+
+        // Live Session Clock + Risk & Lot Size Calculator
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 720.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TradingSessionStrip()
+                LotSizeCalculatorCard()
+            }
+        }
+
+        // Per-Pair Notification Mute / Filter
+        item {
+            MutedPairsManagerCard(
+                knownSymbols = knownSymbols,
+                mutedPairs = uiState.mutedPairs,
+                onToggleMutePair = onToggleMutedPair
+            )
+        }
+
+        // Theme Picker Card
         item {
             ThemeSelectorCard(
                 selectedTheme = uiState.themeId,
@@ -207,7 +303,7 @@ fun BridgeAndSettingsScreen(
             )
         }
 
-        // Client Alerts, Connection & Feed Controls
+        // Connection & Alerts Card (Zero raw Firebase URL leak for non-admin clients!)
         item {
             Surface(
                 shape = RoundedCornerShape(14.dp),
@@ -249,7 +345,7 @@ fun BridgeAndSettingsScreen(
                             if (uiState.isAdminUnlocked) {
                                 "Active Source: RTDB (${uiState.customConfig.databaseURL})"
                             } else {
-                                "Active Source: Digital Vertex Live Stream (Connected)"
+                                "Active Source: Digital Vertex Team Live Stream"
                             }
                         }
                         ConnectionMode.CUSTOM_FIRESTORE -> "Active Source: Custom Firestore (${uiState.customConfig.projectId})"
@@ -404,30 +500,13 @@ fun BridgeAndSettingsScreen(
             }
         }
 
-        // PIN-Gated Admin Deck
-        item {
-            AdminDeckCard(
-                uiState = uiState,
-                onUnlockAdmin = onUnlockAdmin,
-                onLockAdmin = onLockAdmin,
-                onUpdateAdminPin = onUpdateAdminPin,
-                onOpenFirebaseSetup = onOpenFirebaseSetup,
-                onSendAdminDiagnostic = onSendAdminDiagnostic,
-                onClearAllFirebaseSignals = onClearAllFirebaseSignals,
-                onToggleAutoTrackTpSl = onToggleAutoTrackTpSl,
-                onToggleAutoSaveCards = onToggleAutoSaveCards,
-                onToggleShowManualButtons = onToggleShowManualButtons,
-                onShowMessage = onShowMessage
-            )
-        }
-
         // Admin-only Bridge Docs & Python Sender Guide
         if (uiState.isAdminUnlocked) {
             item {
                 CodeGuideCard(
                     icon = Icons.Rounded.Code,
                     title = "Expected Signal JSON Format",
-                    subtitle = "Push objects under the `signals` node/collection with these fields:",
+                    subtitle = "Push objects under `/signals` with these fields (tp3 and lotSize are optional):",
                     code = EXPECTED_SIGNAL_JSON,
                     accentColor = colors.goldAccent,
                     onCopy = {
@@ -441,8 +520,8 @@ fun BridgeAndSettingsScreen(
                 val pythonCode = buildPythonBridgeSnippet(uiState.customConfig.databaseURL)
                 CodeGuideCard(
                     icon = Icons.Rounded.Terminal,
-                    title = "Laptop / VPS Python Bot Sender",
-                    subtitle = "100% Free Firebase RTDB REST push (no Firebase Admin SDK required):",
+                    title = "VPS Python Bot Sender",
+                    subtitle = "100% Free Firebase RTDB REST push (Bot-authoritative TP/SL updates):",
                     code = pythonCode,
                     accentColor = colors.emeraldBuy,
                     onCopy = {
@@ -463,22 +542,142 @@ fun BridgeAndSettingsScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Supported Strategies & Free-Tier Optimization",
+                            text = "Spark Free-Tier Bandwidth Protection",
                             style = MaterialTheme.typography.titleMedium,
                             color = colors.textPrimary
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "• Sides: BUY, SELL\n" +
-                                "• Timeframes: M1, M5, M15, M30, H1, H4, D1\n" +
-                                "• Strategies: 3-Module PA, Bollinger Bands, RSI+EMA, H1 Candle, Candlestick PA\n" +
-                                "• Statuses: ACTIVE, TP1_HIT, TP2_HIT, SL_HIT, CLOSED\n" +
-                                "• Spark Free Tier: App streams only the latest 50 signals (`limitToLast=50`) to save bandwidth.",
+                            text = "• Foreground app streams only the latest 35 signals (`limitToLast=35`), background listener uses `limitToLast=20`.\n" +
+                                "• Pair stops: Turning off a pair in your VPS bot stops notifications automatically, and clients can mute individual pairs locally.\n" +
+                                "• Zero Firebase Storage: Signal cards render locally in RAM and save PNGs only on user click.\n" +
+                                "• Use 'Prune Keep 35' periodically to keep your Spark RTDB tiny and ultra-fast for all friends.",
                             style = MaterialTheme.typography.bodySmall,
                             color = colors.textSecondary,
                             lineHeight = 19.sp
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemberProfileCard(
+    uiState: TradingDeskUiState,
+    onSaveMemberName: (String) -> Unit,
+    onRefreshSync: () -> Unit
+) {
+    val colors = TerminalTheme.colors
+    var editableName by remember(uiState.memberName) { mutableStateOf(uiState.memberName) }
+    val statusColor = when (uiState.memberAccessStatus) {
+        MemberAccessStatus.ACTIVE -> colors.emeraldBuy
+        MemberAccessStatus.PENDING, MemberAccessStatus.PAUSED -> colors.goldAccent
+        MemberAccessStatus.BLOCKED -> colors.crimsonSell
+    }
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.border),
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 720.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Badge,
+                        contentDescription = null,
+                        tint = colors.emeraldBuy,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "My Desk Profile",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.textPrimary
+                        )
+                        Text(
+                            text = "Device ID: ${uiState.deviceId.ifBlank { "Generating..." }}",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 10.sp
+                            ),
+                            color = colors.textMuted
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = statusColor.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.45f))
+                    ) {
+                        Text(
+                            text = uiState.memberAccessStatus.label,
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = statusColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                    IconButton(onClick = onRefreshSync) {
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = "Sync status",
+                            tint = colors.emeraldBuy,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = editableName,
+                    onValueChange = { editableName = it },
+                    label = { Text("Display Name", style = MaterialTheme.typography.bodySmall) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.emeraldBuy,
+                        unfocusedBorderColor = colors.border,
+                        focusedTextColor = colors.textPrimary,
+                        unfocusedTextColor = colors.textPrimary,
+                        focusedLabelColor = colors.emeraldBuy,
+                        unfocusedLabelColor = colors.textSecondary,
+                        cursorColor = colors.emeraldBuy,
+                        focusedContainerColor = colors.surfaceElevated,
+                        unfocusedContainerColor = colors.surfaceElevated
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("member_profile_name_input")
+                )
+
+                OutlinedButton(
+                    onClick = { onSaveMemberName(editableName) },
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, colors.emeraldBuy.copy(alpha = 0.55f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.emeraldBuy),
+                    modifier = Modifier.height(52.dp)
+                ) {
+                    Text("Save Name")
                 }
             }
         }

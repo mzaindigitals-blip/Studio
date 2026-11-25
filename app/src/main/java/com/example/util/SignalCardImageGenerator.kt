@@ -607,6 +607,12 @@ object SignalCardImageGenerator {
         cardType: ShareCardType
     ) {
         val cardsDir = File(context.cacheDir, "shared_cards").apply { mkdirs() }
+        val expiryCutoff = System.currentTimeMillis() - 24L * 3600_000L
+        cardsDir.listFiles()?.forEach { oldFile ->
+            if (oldFile.lastModified() < expiryCutoff) {
+                runCatching { oldFile.delete() }
+            }
+        }
         val tag = if (cardType == ShareCardType.ORDER_ENTRY) "order" else signal.parsedStatus.name.lowercase(Locale.US)
         val fileName = "DigitalVertex_${signal.symbol}_$tag.png"
         val outFile = File(cardsDir, fileName)

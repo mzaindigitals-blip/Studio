@@ -7,9 +7,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -40,6 +42,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -59,6 +65,7 @@ import com.example.ui.theme.TabularMonoStyle
 import com.example.ui.theme.TerminalTheme
 import java.util.Locale
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TerminalHeaderAndStats(
     connectionStatus: ConnectionStatus,
@@ -68,9 +75,12 @@ fun TerminalHeaderAndStats(
     stats: TradeStats,
     onOpenConnectionModal: () -> Unit,
     onToggleMute: () -> Unit,
-    onToggleBackgroundAlerts: () -> Unit
+    onToggleBackgroundAlerts: () -> Unit,
+    onTriggerOwnerUnlock: () -> Unit = {}
 ) {
     val colors = TerminalTheme.colors
+    var logoTapCount by remember { mutableIntStateOf(0) }
+    var lastLogoTapMs by remember { mutableLongStateOf(0L) }
 
     Column(
         modifier = Modifier
@@ -98,7 +108,21 @@ fun TerminalHeaderAndStats(
                         .size(38.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(colors.emeraldContainer)
-                        .border(1.dp, colors.emeraldBuy.copy(alpha = 0.45f), RoundedCornerShape(10.dp)),
+                        .border(1.dp, colors.emeraldBuy.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                        .clickable {
+                            val now = System.currentTimeMillis()
+                            if (now - lastLogoTapMs > 2_000L) {
+                                logoTapCount = 1
+                            } else {
+                                logoTapCount += 1
+                            }
+                            lastLogoTapMs = now
+                            if (logoTapCount >= 5) {
+                                logoTapCount = 0
+                                onTriggerOwnerUnlock()
+                            }
+                        }
+                        .testTag("header_logo_box"),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
@@ -112,14 +136,19 @@ fun TerminalHeaderAndStats(
                 Column {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClick = onTriggerOwnerUnlock
+                        )
                     ) {
                         Text(
                             text = "Digital Vertex",
                             style = MaterialTheme.typography.titleLarge,
                             color = colors.textPrimary,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("header_title_text")
                         )
                         if (isAdminUnlocked) {
                             Surface(
