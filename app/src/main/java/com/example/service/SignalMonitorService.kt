@@ -116,7 +116,7 @@ class SignalMonitorService : Service() {
                     }
                 }
                 .collectLatest { signals ->
-                    val validSignals = signals.filter { it.id.isNotBlank() }
+                    val validSignals = signals.filter { it.id.isNotBlank() && it.isMeaningfulSignal() }
                     if (!initialSnapshotProcessed) {
                         validSignals.forEach { seenStatuses[it.id] = it.parsedStatus }
                         initialSnapshotProcessed = true

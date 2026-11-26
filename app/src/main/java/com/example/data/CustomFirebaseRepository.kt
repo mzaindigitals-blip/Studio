@@ -552,7 +552,17 @@ class CustomFirebaseRepository(private val appContext: Context) {
                     val key = keys.next()
                     val itemObj = data.optJSONObject(key)
                     if (itemObj != null) {
-                        signalsMap[key] = parseSignalFromJson(key, itemObj)
+                        val existing = signalsMap[key]
+                        val parsed = if (eventName == "patch" && existing != null) {
+                            mergeSignalJson(existing, itemObj)
+                        } else {
+                            parseValidSignalOrNull(key, itemObj)
+                        }
+                        if (parsed != null && parsed.isMeaningfulSignal()) {
+                            signalsMap[key] = parsed
+                        } else {
+                            signalsMap.remove(key)
+                        }
                     } else if (data.isNull(key)) {
                         signalsMap.remove(key)
                     }
@@ -568,62 +578,165 @@ class CustomFirebaseRepository(private val appContext: Context) {
                     signalsMap.remove(signalId)
                 } else if (data is JSONObject) {
                     val existing = signalsMap[signalId]
-                    signalsMap[signalId] = if (eventName == "patch" && existing != null) {
+                    val updated = if (eventName == "patch" && existing != null) {
                         mergeSignalJson(existing, data)
                     } else {
-                        parseSignalFromJson(signalId, data)
+                        parseValidSignalOrNull(signalId, data)
+                    }
+                    if (updated != null && updated.isMeaningfulSignal()) {
+                        signalsMap[signalId] = updated
+                    } else {
+                        signalsMap.remove(signalId)
                     }
                 }
             } else if (segments.size == 2) {
                 val field = segments[1]
                 val existing = signalsMap[signalId] ?: return
-                signalsMap[signalId] = when (field) {
-                    "status" -> existing.copy(status = data?.toString() ?: existing.status)
-                    "pnlPercent" -> existing.copy(pnlPercent = (data as? Number)?.toDouble() ?: existing.pnlPercent)
+                val updated = when (field) {
+                    "status" -> existing.copy(status = SignalStatus.fromRaw(data?.toString()).name)
+                    "pnlPercent", "pnl_percent" -> {
+                        val pnl = parseAnyDouble(data)
+                        if (pnl != null) existing.copy(pnlPercent = pnl) else existing
+                    }
+                    "entry", "entry_price", "entryPrice" -> {
+                        val v = parseAnyDouble(data)
+                        if (v != null) existing.copy(entry = v) else existing
+                    }
+                    "sl", "stop_loss", "stopLoss" -> {
+                        val v = parseAnyDouble(data)
+                        if (v != null) existing.copy(sl = v) else existing
+                    }
+                    "tp1", "tp_1", "take_profit_1", "takeProfit1" -> {
+                        val v = parseAnyDouble(data)
+                        if (v != null) existing.copy(tp1 = v) else existing
+                    }
+                    "tp2", "tp_2", "take_profit_2", "takeProfit2" -> {
+                        val v = parseAnyDouble(data)
+                        if (v != null) existing.copy(tp2 = v) else existing
+                    }
+                    "tp3", "tp_3", "take_profit_3", "takeProfit3" -> {
+                        val v = parseAnyDouble(data)
+                        if (v != null) existing.copy(tp3 = v) else existing
+                    }
                     else -> existing
+                }
+                if (updated.isMeaningfulSignal()) {
+                    signalsMap[signalId] = updated
+                } else {
+                    signalsMap.remove(signalId)
                 }
             }
         }
     }
 
-    private fun parseSignalFromJson(id: String, obj: JSONObject): TradingSignal {
-        return TradingSignal(
-            id = obj.optString("id", "").ifBlank { id },
-            symbol = obj.optString("symbol", "XAUUSD"),
-            timeframe = obj.optString("timeframe", "M15"),
-            side = SignalSide.fromRaw(obj.optString("side", "BUY")).name,
-            strategy = obj.optString("strategy", "Price Action"),
-            entry = obj.optDouble("entry", 0.0),
-            sl = obj.optDouble("sl", 0.0),
-            tp1 = obj.optDouble("tp1", 0.0),
-            tp2 = obj.optDouble("tp2", 0.0),
-            tp3 = obj.optDouble("tp3", 0.0),
-            rr = obj.optString("rr", "1:2.0"),
-            lotSize = obj.optString("lotSize", ""),
-            status = SignalStatus.fromRaw(obj.optString("status", "ACTIVE")).name,
-            timestamp = obj.optLong("timestamp", System.currentTimeMillis()),
-            pnlPercent = obj.optDouble("pnlPercent", 0.0),
-            notes = obj.optString("notes", "").takeIf { it.isNotBlank() }
+    private fun parseValidSignalOrNull(id: String, obj: JSONObject): TradingSignal? {
+        val symbol = safeString(obj, "symbol", "pair")?.uppercase() ?: return null
+        val entry = safeDouble(obj, "entry", "entry_price", "entryPrice") ?: 0.0
+        val sl = safeDouble(obj, "sl", "stop_loss", "stopLoss") ?: 0.0
+        val tp1 = safeDouble(obj, "tp1", "tp_1", "take_profit_1", "takeProfit1") ?: 0.0
+        val tp2 = safeDouble(obj, "tp2", "tp_2", "take_profit_2", "takeProfit2") ?: 0.0
+        val tp3 = safeDouble(obj, "tp3", "tp_3", "take_profit_3", "takeProfit3") ?: 0.0
+
+        val parsed = TradingSignal(
+            id = safeString(obj, "id") ?: id,
+            symbol = symbol,
+            timeframe = safeString(obj, "timeframe", "tf") ?: "M15",
+            side = SignalSide.fromRaw(safeString(obj, "side", "direction", "type")).name,
+            strategy = safeString(obj, "strategy", "model", "setup") ?: "Price Action",
+            entry = entry,
+            sl = sl,
+            tp1 = tp1,
+            tp2 = tp2,
+            tp3 = tp3,
+            rr = safeString(obj, "rr", "risk_reward", "riskReward") ?: "1:2.0",
+            lotSize = safeString(obj, "lotSize", "lot_size") ?: "",
+            status = SignalStatus.fromRaw(safeString(obj, "status")).name,
+            timestamp = safeTimestampMillis(obj),
+            pnlPercent = safeDouble(obj, "pnlPercent", "pnl_percent", "pnl") ?: 0.0,
+            notes = safeString(obj, "notes", "note", "comment")
         )
+        return parsed.takeIf { it.isMeaningfulSignal() }
     }
 
     private fun mergeSignalJson(existing: TradingSignal, patch: JSONObject): TradingSignal {
+        val patchedSymbol = safeString(patch, "symbol", "pair")?.uppercase()
+        val patchedTf = safeString(patch, "timeframe", "tf")
+        val patchedSide = safeString(patch, "side", "direction", "type")
+        val patchedStrategy = safeString(patch, "strategy", "model", "setup")
+        val patchedEntry = safeDouble(patch, "entry", "entry_price", "entryPrice")
+        val patchedSl = safeDouble(patch, "sl", "stop_loss", "stopLoss")
+        val patchedTp1 = safeDouble(patch, "tp1", "tp_1", "take_profit_1", "takeProfit1")
+        val patchedTp2 = safeDouble(patch, "tp2", "tp_2", "take_profit_2", "takeProfit2")
+        val patchedTp3 = safeDouble(patch, "tp3", "tp_3", "take_profit_3", "takeProfit3")
+        val patchedRr = safeString(patch, "rr", "risk_reward", "riskReward")
+        val patchedLot = safeString(patch, "lotSize", "lot_size")
+        val patchedStatus = safeString(patch, "status")
+        val patchedTs = safeTimestampMillis(patch)
+        val patchedPnl = safeDouble(patch, "pnlPercent", "pnl_percent", "pnl")
+        val patchedNotes = safeString(patch, "notes", "note", "comment")
+
         return existing.copy(
-            symbol = if (patch.has("symbol")) patch.optString("symbol", existing.symbol) else existing.symbol,
-            timeframe = if (patch.has("timeframe")) patch.optString("timeframe", existing.timeframe) else existing.timeframe,
-            side = if (patch.has("side")) SignalSide.fromRaw(patch.optString("side")).name else existing.side,
-            strategy = if (patch.has("strategy")) patch.optString("strategy", existing.strategy) else existing.strategy,
-            entry = if (patch.has("entry")) patch.optDouble("entry", existing.entry) else existing.entry,
-            sl = if (patch.has("sl")) patch.optDouble("sl", existing.sl) else existing.sl,
-            tp1 = if (patch.has("tp1")) patch.optDouble("tp1", existing.tp1) else existing.tp1,
-            tp2 = if (patch.has("tp2")) patch.optDouble("tp2", existing.tp2) else existing.tp2,
-            tp3 = if (patch.has("tp3")) patch.optDouble("tp3", existing.tp3) else existing.tp3,
-            rr = if (patch.has("rr")) patch.optString("rr", existing.rr) else existing.rr,
-            lotSize = if (patch.has("lotSize")) patch.optString("lotSize", existing.lotSize) else existing.lotSize,
-            status = if (patch.has("status")) SignalStatus.fromRaw(patch.optString("status")).name else existing.status,
-            timestamp = if (patch.has("timestamp")) patch.optLong("timestamp", existing.timestamp) else existing.timestamp,
-            pnlPercent = if (patch.has("pnlPercent")) patch.optDouble("pnlPercent", existing.pnlPercent) else existing.pnlPercent
+            symbol = patchedSymbol ?: existing.symbol,
+            timeframe = patchedTf ?: existing.timeframe,
+            side = patchedSide?.let { SignalSide.fromRaw(it).name } ?: existing.side,
+            strategy = patchedStrategy ?: existing.strategy,
+            entry = patchedEntry ?: existing.entry,
+            sl = patchedSl ?: existing.sl,
+            tp1 = patchedTp1 ?: existing.tp1,
+            tp2 = patchedTp2 ?: existing.tp2,
+            tp3 = patchedTp3 ?: existing.tp3,
+            rr = patchedRr ?: existing.rr,
+            lotSize = patchedLot ?: existing.lotSize,
+            status = patchedStatus?.let { SignalStatus.fromRaw(it).name } ?: existing.status,
+            timestamp = if (patchedTs > 0L) patchedTs else existing.timestamp,
+            pnlPercent = patchedPnl ?: existing.pnlPercent,
+            notes = patchedNotes ?: existing.notes
         )
+    }
+
+    private fun safeString(obj: JSONObject, vararg keys: String): String? {
+        for (key in keys) {
+            if (!obj.has(key) || obj.isNull(key)) continue
+            val raw = obj.opt(key)?.toString()?.trim().orEmpty()
+            if (raw.isNotEmpty() && !raw.equals("null", ignoreCase = true)) {
+                return raw
+            }
+        }
+        return null
+    }
+
+    private fun safeDouble(obj: JSONObject, vararg keys: String): Double? {
+        for (key in keys) {
+            if (!obj.has(key) || obj.isNull(key)) continue
+            val parsed = parseAnyDouble(obj.opt(key))
+            if (parsed != null) return parsed
+        }
+        return null
+    }
+
+    private fun parseAnyDouble(raw: Any?): Double? {
+        val value = when (raw) {
+            is Number -> raw.toDouble()
+            is String -> raw.trim().toDoubleOrNull()
+            else -> null
+        } ?: return null
+        return if (value.isFinite()) value else null
+    }
+
+    private fun safeTimestampMillis(obj: JSONObject): Long {
+        val keys = arrayOf("timestamp", "time", "created_at", "createdAt", "updatedAt")
+        for (key in keys) {
+            if (!obj.has(key) || obj.isNull(key)) continue
+            val raw = obj.opt(key)
+            val parsed = when (raw) {
+                is Number -> raw.toLong()
+                is String -> raw.trim().toDoubleOrNull()?.toLong()
+                else -> null
+            } ?: continue
+            if (parsed <= 0L) continue
+            return if (parsed < 10_000_000_000L) parsed * 1000L else parsed
+        }
+        return 0L
     }
 
     // --- CUSTOM EXTERNAL FIRESTORE ---
@@ -658,7 +771,8 @@ class CustomFirebaseRepository(private val appContext: Context) {
                 snapshot.toObjects(
                     TradingSignal::class.java,
                     DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                ).sortedByDescending { it.effectiveTimestampMillis() }
+                ).filter { it.isMeaningfulSignal() }
+                    .sortedByDescending { it.effectiveTimestampMillis() }
             }
             .catch { error ->
                 val firestoreError = generateSequence(error) { it.cause }

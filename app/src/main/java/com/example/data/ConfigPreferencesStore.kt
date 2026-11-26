@@ -23,8 +23,11 @@ data class PersistedDeskPreferences(
     val customConfig: CustomFirebaseConfig = CustomFirebaseConfig(),
     val isSoundMuted: Boolean = false,
     val themeId: DeskThemeId = DeskThemeId.OBSIDIAN_GOLD,
+    val isLightMode: Boolean = false,
     val clearedBeforeTimestamp: Long = 0L,
+    val clearedLiveIds: Set<String> = emptySet(),
     val historyClearedBeforeTimestamp: Long = 0L,
+    val clearedHistoryIds: Set<String> = emptySet(),
     val adminPin: String = "2026",
     val backgroundAlertsEnabled: Boolean = false,
     val autoTrackTpSlEnabled: Boolean = false,
@@ -48,8 +51,11 @@ class ConfigPreferencesStore(private val context: Context) {
         val APP_ID = stringPreferencesKey("fb_app_id")
         val SOUND_MUTED = booleanPreferencesKey("sound_muted")
         val THEME_ID = stringPreferencesKey("theme_id")
+        val IS_LIGHT_MODE = booleanPreferencesKey("is_light_mode")
         val CLEARED_BEFORE_TS = longPreferencesKey("cleared_before_ts")
+        val CLEARED_LIVE_IDS = stringSetPreferencesKey("cleared_live_ids")
         val HISTORY_CLEARED_BEFORE_TS = longPreferencesKey("history_cleared_before_ts")
+        val CLEARED_HISTORY_IDS = stringSetPreferencesKey("cleared_history_ids")
         val ADMIN_PIN = stringPreferencesKey("admin_pin")
         val BACKGROUND_ALERTS = booleanPreferencesKey("background_alerts_enabled")
         val AUTO_TRACK_TP_SL = booleanPreferencesKey("auto_track_tp_sl_v2")
@@ -78,8 +84,11 @@ class ConfigPreferencesStore(private val context: Context) {
                 ),
                 isSoundMuted = prefs[Keys.SOUND_MUTED] ?: false,
                 themeId = DeskThemeId.fromRaw(prefs[Keys.THEME_ID]),
+                isLightMode = prefs[Keys.IS_LIGHT_MODE] ?: false,
                 clearedBeforeTimestamp = prefs[Keys.CLEARED_BEFORE_TS] ?: 0L,
+                clearedLiveIds = prefs[Keys.CLEARED_LIVE_IDS] ?: emptySet(),
                 historyClearedBeforeTimestamp = prefs[Keys.HISTORY_CLEARED_BEFORE_TS] ?: 0L,
+                clearedHistoryIds = prefs[Keys.CLEARED_HISTORY_IDS] ?: emptySet(),
                 adminPin = prefs[Keys.ADMIN_PIN] ?: "2026",
                 backgroundAlertsEnabled = prefs[Keys.BACKGROUND_ALERTS] ?: false,
                 autoTrackTpSlEnabled = prefs[Keys.AUTO_TRACK_TP_SL] ?: false,
@@ -138,15 +147,37 @@ class ConfigPreferencesStore(private val context: Context) {
         }
     }
 
-    suspend fun setClearedBeforeTimestamp(timestampMillis: Long) {
+    suspend fun setLightMode(isLightMode: Boolean) {
         context.signalDeskDataStore.edit { prefs ->
-            prefs[Keys.CLEARED_BEFORE_TS] = timestampMillis
+            prefs[Keys.IS_LIGHT_MODE] = isLightMode
         }
     }
 
-    suspend fun setHistoryClearedBeforeTimestamp(timestampMillis: Long) {
+    suspend fun setClearedFeed(timestampMillis: Long, clearedIds: Set<String>) {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.CLEARED_BEFORE_TS] = timestampMillis
+            prefs[Keys.CLEARED_LIVE_IDS] = clearedIds
+        }
+    }
+
+    suspend fun clearLiveDismissals() {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.CLEARED_BEFORE_TS] = 0L
+            prefs[Keys.CLEARED_LIVE_IDS] = emptySet()
+        }
+    }
+
+    suspend fun setHistoryClearedFeed(timestampMillis: Long, clearedIds: Set<String>) {
         context.signalDeskDataStore.edit { prefs ->
             prefs[Keys.HISTORY_CLEARED_BEFORE_TS] = timestampMillis
+            prefs[Keys.CLEARED_HISTORY_IDS] = clearedIds
+        }
+    }
+
+    suspend fun clearHistoryDismissals() {
+        context.signalDeskDataStore.edit { prefs ->
+            prefs[Keys.HISTORY_CLEARED_BEFORE_TS] = 0L
+            prefs[Keys.CLEARED_HISTORY_IDS] = emptySet()
         }
     }
 

@@ -403,7 +403,7 @@ fun ActiveHistoryScreen(
                             showAdminActions = showAdminCardActions,
                             onUpdateStatus = { newStatus -> onUpdateStatus(signal, newStatus) },
                             onDismissNew = { onDismissNew(signal.id) },
-                            themeKey = uiState.themeId.name,
+                            themeKey = "${uiState.themeId.name}_${uiState.isLightMode}",
                             livePrice = uiState.livePrices[signal.symbol.uppercase(Locale.US)],
                             showLiveReferencePrice = uiState.autoTrackTpSlEnabled,
                             onSaveCard = { cardType -> onSaveCard(signal, cardType) },

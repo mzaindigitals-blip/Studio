@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -38,6 +39,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -47,9 +49,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -106,15 +111,15 @@ enum class DeskTab(
         testTag = "nav_tab_live_signals"
     ),
     ACTIVE_HISTORY(
-        clientTitle = "Active & History",
-        adminTitle = "Active & History",
+        clientTitle = "History",
+        adminTitle = "History",
         selectedIcon = Icons.Rounded.History,
         unselectedIcon = Icons.Outlined.History,
         testTag = "nav_tab_active_history"
     ),
     DESK_ADMIN(
-        clientTitle = "Tools & Desk",
-        adminTitle = "Admin Desk",
+        clientTitle = "Tools",
+        adminTitle = "Admin",
         selectedIcon = Icons.Rounded.Tune,
         unselectedIcon = Icons.Outlined.Tune,
         testTag = "nav_tab_bridge_settings"
@@ -160,14 +165,14 @@ fun SignalDeskApp() {
                         prefsStore = ConfigPreferencesStore(appContext),
                         soundPlayer = SoundAlertPlayer(),
                         authenticatedUserId = currentUser?.uid,
-                        onAutoSaveCard = { signal, cardType, themeId ->
+                        onAutoSaveCard = { signal, cardType, themeId, isLightMode ->
                             autoSaveScope.launch {
-                                val palette = paletteForTheme(themeId)
+                                val palette = paletteForTheme(themeId, isLightMode = isLightMode)
                                 val bitmap = SignalCardImageGenerator.getOrRenderPreviewBitmap(
                                     signal = signal,
                                     cardType = cardType,
                                     palette = palette,
-                                    themeKey = themeId.name
+                                    themeKey = "${themeId.name}_$isLightMode"
                                 )
                                 SignalCardImageGenerator.saveSignalCardToGallery(
                                     context = appContext,
@@ -183,8 +188,20 @@ fun SignalDeskApp() {
         )
 
         val uiState by deskViewModel.uiState.collectAsStateWithLifecycle()
+        val view = LocalView.current
+        if (!view.isInEditMode) {
+            SideEffect {
+                val window = (view.context as? Activity)?.window ?: return@SideEffect
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = uiState.isLightMode
+                controller.isAppearanceLightNavigationBars = uiState.isLightMode
+            }
+        }
 
-        SignalDeskTheme(themeId = uiState.themeId) {
+        SignalDeskTheme(
+            themeId = uiState.themeId,
+            isLightMode = uiState.isLightMode
+        ) {
             SignalDeskScaffold(
                 viewModel = deskViewModel,
                 uiState = uiState
@@ -295,7 +312,10 @@ private fun SignalDeskScaffold(
                                 label = {
                                     Text(
                                         text = label,
-                                        style = MaterialTheme.typography.labelSmall
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 },
                                 colors = NavigationBarItemDefaults.colors(
@@ -340,7 +360,10 @@ private fun SignalDeskScaffold(
                                 label = {
                                     Text(
                                         text = label,
-                                        style = MaterialTheme.typography.labelSmall
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 },
                                 colors = NavigationRailItemDefaults.colors(
@@ -362,10 +385,12 @@ private fun SignalDeskScaffold(
                         isSoundMuted = uiState.isSoundMuted,
                         backgroundAlertsEnabled = uiState.backgroundAlertsEnabled,
                         isAdminUnlocked = uiState.isAdminUnlocked,
+                        isLightMode = uiState.isLightMode,
                         stats = uiState.stats,
                         onOpenConnectionModal = { showFirebaseModal = true },
                         onToggleMute = { viewModel.toggleSoundMute() },
                         onToggleBackgroundAlerts = handleToggleBackgroundAlerts,
+                        onToggleLightMode = viewModel::toggleLightMode,
                         onTriggerOwnerUnlock = {
                             if (uiState.isAdminUnlocked) {
                                 currentTab = DeskTab.DESK_ADMIN
@@ -377,13 +402,13 @@ private fun SignalDeskScaffold(
 
                     val saveCardDirectly: (TradingSignal, ShareCardType) -> Unit = { sig, cardType ->
                         scope.launch {
-                            val palette = paletteForTheme(uiState.themeId)
+                            val palette = paletteForTheme(uiState.themeId, isLightMode = uiState.isLightMode)
                             val saveResult = withContext(Dispatchers.IO) {
                                 val bitmap = SignalCardImageGenerator.getOrRenderPreviewBitmap(
                                     signal = sig,
                                     cardType = cardType,
                                     palette = palette,
-                                    themeKey = uiState.themeId.name
+                                    themeKey = "${uiState.themeId.name}_${uiState.isLightMode}"
                                 )
                                 SignalCardImageGenerator.saveSignalCardToGallery(
                                     context = context,
@@ -452,6 +477,7 @@ private fun SignalDeskScaffold(
                                     onToggleBackgroundAlerts = handleToggleBackgroundAlerts,
                                     onRestoreClearedFeed = viewModel::restoreClearedFeed,
                                     onSelectTheme = viewModel::setThemeId,
+                                    onSetLightMode = viewModel::setLightMode,
                                     onUpdateMemberName = viewModel::updateMemberName,
                                     onRefreshTeamSync = viewModel::refreshTeamSync,
                                     onToggleMutedPair = viewModel::toggleMutedPair,

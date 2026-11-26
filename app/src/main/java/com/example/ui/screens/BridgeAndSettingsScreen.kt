@@ -26,6 +26,8 @@ import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayCircleOutline
@@ -145,6 +147,7 @@ fun BridgeAndSettingsScreen(
     onToggleBackgroundAlerts: () -> Unit,
     onRestoreClearedFeed: () -> Unit,
     onSelectTheme: (DeskThemeId) -> Unit,
+    onSetLightMode: (Boolean) -> Unit = {},
     onUpdateMemberName: (String) -> Unit,
     onRefreshTeamSync: () -> Unit,
     onToggleMutedPair: (String) -> Unit,
@@ -295,11 +298,13 @@ fun BridgeAndSettingsScreen(
             )
         }
 
-        // Theme Picker Card
+        // Theme Picker + Dark / Light Mode Card
         item {
             ThemeSelectorCard(
                 selectedTheme = uiState.themeId,
-                onSelectTheme = onSelectTheme
+                isLightMode = uiState.isLightMode,
+                onSelectTheme = onSelectTheme,
+                onSetLightMode = onSetLightMode
             )
         }
 
@@ -687,7 +692,9 @@ private fun MemberProfileCard(
 @Composable
 private fun ThemeSelectorCard(
     selectedTheme: DeskThemeId,
-    onSelectTheme: (DeskThemeId) -> Unit
+    isLightMode: Boolean,
+    onSelectTheme: (DeskThemeId) -> Unit,
+    onSetLightMode: (Boolean) -> Unit
 ) {
     val colors = TerminalTheme.colors
     Surface(
@@ -711,15 +718,94 @@ private fun ThemeSelectorCard(
                 )
                 Column {
                     Text(
-                        text = "Terminal Theme",
+                        text = "Appearance & Theme",
                         style = MaterialTheme.typography.titleMedium,
                         color = colors.textPrimary
                     )
                     Text(
-                        text = "Tap any style to customize your Digital Vertex desk",
+                        text = "Switch between Dark / Light Mode and pick your palette",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.textSecondary
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Dark Mode / Light Mode Toggle
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = colors.surfaceElevated,
+                border = BorderStroke(1.dp, colors.borderSubtle),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val darkSelected = !isLightMode
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (darkSelected) colors.emeraldContainer else Color.Transparent,
+                        border = if (darkSelected) BorderStroke(1.dp, colors.emeraldBuy.copy(alpha = 0.55f)) else null,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSetLightMode(false) }
+                            .testTag("appearance_dark_mode_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.DarkMode,
+                                contentDescription = null,
+                                tint = if (darkSelected) colors.emeraldBuy else colors.textSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Dark Mode",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (darkSelected) colors.emeraldBuy else colors.textSecondary
+                            )
+                        }
+                    }
+
+                    val lightSelected = isLightMode
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (lightSelected) colors.goldContainer else Color.Transparent,
+                        border = if (lightSelected) BorderStroke(1.dp, colors.goldAccent.copy(alpha = 0.65f)) else null,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSetLightMode(true) }
+                            .testTag("appearance_light_mode_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.LightMode,
+                                contentDescription = null,
+                                tint = if (lightSelected) colors.goldAccent else colors.textSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Light Mode",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (lightSelected) colors.goldAccent else colors.textSecondary
+                            )
+                        }
+                    }
                 }
             }
 
@@ -733,7 +819,7 @@ private fun ThemeSelectorCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         rowThemes.forEach { themeId ->
-                            val preview = paletteForTheme(themeId)
+                            val preview = paletteForTheme(themeId, isLightMode = isLightMode)
                             val isSelected = selectedTheme == themeId
                             Surface(
                                 shape = RoundedCornerShape(12.dp),

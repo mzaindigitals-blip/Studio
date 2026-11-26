@@ -53,7 +53,8 @@ class BuiltInFirestoreRepository(
                     snapshot.toObjects(
                         TradingSignal::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                    ).sortedByDescending { it.effectiveTimestampMillis() }
+                    ).filter { it.isMeaningfulSignal() }
+                        .sortedByDescending { it.effectiveTimestampMillis() }
                 }
                 .catch { error ->
                     val firestoreError = generateSequence(error) { it.cause }

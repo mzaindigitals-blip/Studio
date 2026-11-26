@@ -10,6 +10,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -71,6 +73,7 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SignalCard(
     signal: TradingSignal,
@@ -251,15 +254,15 @@ fun SignalCard(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Strategy, R:R, Lot, P&L, Timestamp
+                // Strategy, R:R, Lot, P&L, Timestamp (never breaks R:R mid-number)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier.weight(1f)
                     ) {
                         Surface(
@@ -271,6 +274,7 @@ fun SignalCard(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = colors.goldAccent,
                                 maxLines = 1,
+                                softWrap = false,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                             )
@@ -282,7 +286,9 @@ fun SignalCard(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold
                             ),
-                            color = colors.textSecondary
+                            color = colors.textSecondary,
+                            maxLines = 1,
+                            softWrap = false
                         )
 
                         if (status != SignalStatus.ACTIVE) {
@@ -302,7 +308,9 @@ fun SignalCard(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 ),
-                                color = pnlColor
+                                color = pnlColor,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -318,7 +326,9 @@ fun SignalCard(
                         Text(
                             text = formatRelativeAndClockTime(signal.effectiveTimestampMillis()),
                             style = MaterialTheme.typography.labelSmall,
-                            color = colors.textMuted
+                            color = colors.textMuted,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -845,6 +855,7 @@ private fun QuickStatusButton(
 }
 
 fun formatRelativeAndClockTime(timestampMillis: Long): String {
+    if (timestampMillis <= 0L) return "Live"
     val diff = (System.currentTimeMillis() - timestampMillis).coerceAtLeast(0L)
     val mins = diff / 60_000L
     val hours = diff / 3_600_000L

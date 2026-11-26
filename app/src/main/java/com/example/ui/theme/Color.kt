@@ -43,7 +43,16 @@ data class TerminalPalette(
     val textMuted: Color
 )
 
-fun paletteForTheme(themeId: DeskThemeId): TerminalPalette = when (themeId) {
+fun paletteForTheme(
+    themeId: DeskThemeId,
+    isLightMode: Boolean = false
+): TerminalPalette = if (isLightMode) {
+    lightPaletteForTheme(themeId)
+} else {
+    darkPaletteForTheme(themeId)
+}
+
+private fun darkPaletteForTheme(themeId: DeskThemeId): TerminalPalette = when (themeId) {
     DeskThemeId.OBSIDIAN_GOLD -> TerminalPalette(
         background = Color(0xFF070A0F),
         surface = Color(0xFF0E141D),
@@ -137,4 +146,98 @@ fun paletteForTheme(themeId: DeskThemeId): TerminalPalette = when (themeId) {
     )
 }
 
-val LocalTerminalPalette = staticCompositionLocalOf { paletteForTheme(DeskThemeId.OBSIDIAN_GOLD) }
+private fun lightPaletteForTheme(themeId: DeskThemeId): TerminalPalette = when (themeId) {
+    DeskThemeId.OBSIDIAN_GOLD -> TerminalPalette(
+        background = Color(0xFFF4F6FA),
+        surface = Color(0xFFFFFFFF),
+        surfaceElevated = Color(0xFFF0F4F9),
+        surfaceHighlight = Color(0xFFE4EAF3),
+        border = Color(0xFFD4DEEC),
+        borderSubtle = Color(0xFFE5ECF5),
+        emeraldBuy = Color(0xFF059669),
+        emeraldBuyDim = Color(0xFF047857),
+        emeraldContainer = Color(0xFFD1FAE5),
+        crimsonSell = Color(0xFFDC2626),
+        crimsonSellDim = Color(0xFFB91C1C),
+        crimsonContainer = Color(0xFFFEE2E2),
+        goldAccent = Color(0xFFB45309),
+        goldAccentBright = Color(0xFFD97706),
+        goldContainer = Color(0xFFFEF3C7),
+        cyanInfo = Color(0xFF0284C7),
+        cyanContainer = Color(0xFFE0F2FE),
+        textPrimary = Color(0xFF0F172A),
+        textSecondary = Color(0xFF475569),
+        textMuted = Color(0xFF64748B)
+    )
+
+    DeskThemeId.CYBER_MATRIX -> TerminalPalette(
+        background = Color(0xFFF0F7FA),
+        surface = Color(0xFFFFFFFF),
+        surfaceElevated = Color(0xFFE9F3F8),
+        surfaceHighlight = Color(0xFFDCEBF3),
+        border = Color(0xFFC5DCE8),
+        borderSubtle = Color(0xFFDDECF4),
+        emeraldBuy = Color(0xFF059669),
+        emeraldBuyDim = Color(0xFF047857),
+        emeraldContainer = Color(0xFFCCFBF1),
+        crimsonSell = Color(0xFFE11D48),
+        crimsonSellDim = Color(0xFFBE123C),
+        crimsonContainer = Color(0xFFFFE4E6),
+        goldAccent = Color(0xFF0369A1),
+        goldAccentBright = Color(0xFF0284C7),
+        goldContainer = Color(0xFFE0F2FE),
+        cyanInfo = Color(0xFF0891B2),
+        cyanContainer = Color(0xFFCFFAFE),
+        textPrimary = Color(0xFF0B192C),
+        textSecondary = Color(0xFF3E556E),
+        textMuted = Color(0xFF627A94)
+    )
+
+    DeskThemeId.ROYAL_PLATINUM -> TerminalPalette(
+        background = Color(0xFFF3F5FB),
+        surface = Color(0xFFFFFFFF),
+        surfaceElevated = Color(0xFFEEF1F9),
+        surfaceHighlight = Color(0xFFE1E7F4),
+        border = Color(0xFFD0D9ED),
+        borderSubtle = Color(0xFFE3E9F6),
+        emeraldBuy = Color(0xFF059669),
+        emeraldBuyDim = Color(0xFF047857),
+        emeraldContainer = Color(0xFFD1FAE5),
+        crimsonSell = Color(0xFFDC2626),
+        crimsonSellDim = Color(0xFFB91C1C),
+        crimsonContainer = Color(0xFFFEE2E2),
+        goldAccent = Color(0xFFA16207),
+        goldAccentBright = Color(0xFFCA8A04),
+        goldContainer = Color(0xFFFEF9C3),
+        cyanInfo = Color(0xFF1D4ED8),
+        cyanContainer = Color(0xFFDBEAFE),
+        textPrimary = Color(0xFF101B36),
+        textSecondary = Color(0xFF475577),
+        textMuted = Color(0xFF69799B)
+    )
+
+    DeskThemeId.STEALTH_CARBON -> TerminalPalette(
+        background = Color(0xFFF5F6F8),
+        surface = Color(0xFFFFFFFF),
+        surfaceElevated = Color(0xFFF0F1F4),
+        surfaceHighlight = Color(0xFFE5E7EC),
+        border = Color(0xFFD5D8E0),
+        borderSubtle = Color(0xFFE6E8EE),
+        emeraldBuy = Color(0xFF0D9488),
+        emeraldBuyDim = Color(0xFF0F766E),
+        emeraldContainer = Color(0xFFCCFBF1),
+        crimsonSell = Color(0xFFE11D48),
+        crimsonSellDim = Color(0xFFBE123C),
+        crimsonContainer = Color(0xFFFFE4E6),
+        goldAccent = Color(0xFFD97706),
+        goldAccentBright = Color(0xFFF59E0B),
+        goldContainer = Color(0xFFFEF3C7),
+        cyanInfo = Color(0xFF0284C7),
+        cyanContainer = Color(0xFFE0F2FE),
+        textPrimary = Color(0xFF111827),
+        textSecondary = Color(0xFF4B5563),
+        textMuted = Color(0xFF6B7280)
+    )
+}
+
+val LocalTerminalPalette = staticCompositionLocalOf { paletteForTheme(DeskThemeId.OBSIDIAN_GOLD, false) }

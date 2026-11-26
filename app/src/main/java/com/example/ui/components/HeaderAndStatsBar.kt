@@ -32,6 +32,8 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.AdminPanelSettings
 import androidx.compose.material.icons.rounded.CandlestickChart
 import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material3.Icon
@@ -54,6 +56,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,10 +75,12 @@ fun TerminalHeaderAndStats(
     isSoundMuted: Boolean,
     backgroundAlertsEnabled: Boolean,
     isAdminUnlocked: Boolean,
+    isLightMode: Boolean = false,
     stats: TradeStats,
     onOpenConnectionModal: () -> Unit,
     onToggleMute: () -> Unit,
     onToggleBackgroundAlerts: () -> Unit,
+    onToggleLightMode: () -> Unit = {},
     onTriggerOwnerUnlock: () -> Unit = {}
 ) {
     val colors = TerminalTheme.colors
@@ -133,76 +138,70 @@ fun TerminalHeaderAndStats(
                     )
                 }
                 Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.combinedClickable(
-                            onClick = {},
-                            onLongClick = onTriggerOwnerUnlock
-                        )
-                    ) {
-                        Text(
-                            text = "Digital Vertex",
-                            style = MaterialTheme.typography.titleLarge,
-                            color = colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.testTag("header_title_text")
-                        )
-                        if (isAdminUnlocked) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = colors.goldContainer,
-                                border = BorderStroke(1.dp, colors.goldAccent.copy(alpha = 0.5f))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.combinedClickable(
+                        onClick = {},
+                        onLongClick = onTriggerOwnerUnlock
+                    )
+                ) {
+                    Text(
+                        text = "Digital Vertex",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = colors.textPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("header_title_text")
+                    )
+                    if (isAdminUnlocked) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = colors.goldContainer,
+                            border = BorderStroke(1.dp, colors.goldAccent.copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.AdminPanelSettings,
-                                        contentDescription = "Admin mode active",
-                                        tint = colors.goldAccent,
-                                        modifier = Modifier.size(10.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(2.dp))
-                                    Text(
-                                        text = "ADMIN",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontSize = 8.sp,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = colors.goldAccent
-                                    )
-                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.AdminPanelSettings,
+                                    contentDescription = "Admin mode active",
+                                    tint = colors.goldAccent,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text(
+                                    text = "ADMIN",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = colors.goldAccent
+                                )
                             }
                         }
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        StatusBadgePill(
-                            status = connectionStatus,
-                            onClick = onOpenConnectionModal
-                        )
-                        Text(
-                            text = "By Muhammad Zain",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                            color = colors.textMuted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                horizontalArrangement = Arrangement.spacedBy(0.dp)
             ) {
+                IconButton(
+                    onClick = onToggleLightMode,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("light_dark_toggle_button")
+                ) {
+                    Icon(
+                        imageVector = if (isLightMode) Icons.Rounded.DarkMode else Icons.Rounded.LightMode,
+                        contentDescription = if (isLightMode) "Switch to Dark Mode" else "Switch to Light Mode",
+                        tint = colors.goldAccent
+                    )
+                }
+
                 IconButton(
                     onClick = onToggleBackgroundAlerts,
                     modifier = Modifier
@@ -241,6 +240,29 @@ fun TerminalHeaderAndStats(
                     )
                 }
             }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            StatusBadgePill(
+                status = connectionStatus,
+                onClick = onOpenConnectionModal
+            )
+            Text(
+                text = "By Muhammad Zain",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                color = colors.textMuted,
+                maxLines = 1,
+                softWrap = false
+            )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -403,14 +425,14 @@ fun PerformanceMetricsBar(stats: TradeStats) {
                         title = "WIN RATE",
                         primaryValue = String.format(Locale.US, "%.1f%%", stats.winRate),
                         primaryColor = winRateColor,
-                        subtitle = "${stats.todayWins + stats.yesterdayWins} total wins",
+                        subtitle = "${stats.todayWins + stats.yesterdayWins} wins",
                         modifier = Modifier.weight(1f)
                     )
                     StatMetricCard(
-                        title = "ACTIVE TRADES",
+                        title = "ACTIVE",
                         primaryValue = stats.activeCount.toString(),
                         primaryColor = colors.goldAccent,
-                        subtitle = "Live open desk",
+                        subtitle = "Open desk",
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -439,20 +461,24 @@ private fun StatMetricCard(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.labelSmall,
-                    color = colors.textMuted
+                    color = colors.textMuted,
+                    maxLines = 1,
+                    softWrap = false
                 )
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.textSecondary,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f)
                 )
             }
             Spacer(modifier = Modifier.height(3.dp))

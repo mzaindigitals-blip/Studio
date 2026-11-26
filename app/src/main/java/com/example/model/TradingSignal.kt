@@ -97,9 +97,12 @@ data class TradingSignal(
     val parsedTimeframe: Timeframe
         get() = Timeframe.fromRaw(timeframe)
 
+    fun isMeaningfulSignal(): Boolean =
+        symbol.trim().isNotBlank() && (entry > 0.0 || sl > 0.0 || tp1 > 0.0 || tp2 > 0.0)
+
     fun effectiveTimestampMillis(): Long {
         if (timestamp > 0L) return timestamp
-        return createdAt?.toDate()?.time ?: System.currentTimeMillis()
+        return createdAt?.toDate()?.time ?: 0L
     }
 
     fun calculatePnlForStatus(targetStatus: SignalStatus): Double {

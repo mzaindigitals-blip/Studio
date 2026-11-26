@@ -11,8 +11,11 @@ import com.example.model.computeActiveTradingSession
 import com.example.model.formatPrice
 import com.example.ui.components.CalculatorInstrument
 import com.example.ui.components.calculateRiskAndLotSize
+import com.example.ui.theme.DeskThemeId
+import com.example.ui.theme.paletteForTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -149,5 +152,57 @@ class DeskLogicUnitTest {
         )
         assertNotNull(cryptoRes)
         assertEquals("0.02000 units", cryptoRes!!.primarySizeLabel)
+    }
+
+    @Test
+    fun meaningfulSignalFilter_rejectsGhostEmptyPriceCards() {
+        val ghostEmpty = TradingSignal(
+            id = "ghost_1",
+            symbol = "XAUUSD",
+            timeframe = "M15",
+            side = SignalSide.BUY.name,
+            strategy = "Price Action",
+            entry = 0.0,
+            sl = 0.0,
+            tp1 = 0.0,
+            tp2 = 0.0,
+            status = SignalStatus.TP1_HIT.name,
+            timestamp = 0L
+        )
+        assertFalse(ghostEmpty.isMeaningfulSignal())
+        assertEquals(0L, ghostEmpty.effectiveTimestampMillis())
+
+        val blankSymbol = TradingSignal(
+            id = "ghost_2",
+            symbol = "   ",
+            entry = 2642.50,
+            sl = 2635.00,
+            tp1 = 2652.50
+        )
+        assertFalse(blankSymbol.isMeaningfulSignal())
+
+        val validBotSignal = TradingSignal(
+            id = "sig_real_1",
+            symbol = "XAUUSD",
+            timeframe = "M15",
+            side = SignalSide.BUY.name,
+            entry = 2642.50,
+            sl = 2635.00,
+            tp1 = 2652.50,
+            tp2 = 2662.50,
+            timestamp = 1763673400000L
+        )
+        assertTrue(validBotSignal.isMeaningfulSignal())
+        assertEquals(1763673400000L, validBotSignal.effectiveTimestampMillis())
+    }
+
+    @Test
+    fun paletteForTheme_providesDistinctDarkAndLightPalettes() {
+        DeskThemeId.entries.forEach { themeId ->
+            val dark = paletteForTheme(themeId, isLightMode = false)
+            val light = paletteForTheme(themeId, isLightMode = true)
+            assertNotEquals(dark.background, light.background)
+            assertNotEquals(dark.textPrimary, light.textPrimary)
+        }
     }
 }
